@@ -7,25 +7,12 @@ from aiogram.exceptions import TelegramAPIError
 logger = logging.getLogger(__name__)
 
 class ErrorHandlingMiddleware(BaseMiddleware):
-    """Middleware for handling errors in handlers."""
-    
     async def __call__(
         self,
         handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
         data: Dict[str, Any]
     ) -> Any:
-        """
-        Process the event and handle any errors.
-        
-        Args:
-            handler: The next handler in the chain
-            event: The event to process
-            data: Additional data
-            
-        Returns:
-            Any: The result of the handler
-        """
         try:
             return await handler(event, data)
         except TelegramAPIError as e:

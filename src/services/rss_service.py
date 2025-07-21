@@ -2,7 +2,7 @@ import feedparser
 import logging
 import asyncio
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import ssl
 
 from aiogram import Bot
@@ -14,9 +14,11 @@ from config.config import config
 logger = logging.getLogger(__name__)
 
 # Get constants from config
-RSS_CHECK_INTERVAL = config.get("RSS_CHECK_INTERVAL", 300)  # Default: 5 minutes
-POST_AGE_LIMIT = config.get("POST_AGE_LIMIT", 86400)  # Default: 24 hours
-
+RSS_CHECK_INTERVAL = config.get("RSS_CHECK_INTERVAL")
+# Default: keep sent posts for 30 days
+SENT_POSTS_RETENTION_DAYS = int(config.get("SENT_POSTS_RETENTION_DAYS", 30))
+# Default: run cleanup once a day (in seconds)
+CLEANUP_INTERVAL = int(config.get("CLEANUP_INTERVAL", 86400))
 
 class RSSService:
     def __init__(self, bot: Bot, rss_management_service: RSSManagementService):
@@ -24,9 +26,9 @@ class RSSService:
         self.bot = bot
         self.rss_management_service = rss_management_service
         self.check_interval = int(RSS_CHECK_INTERVAL)
-        self.post_age_limit = int(POST_AGE_LIMIT)
         self.running = False
         self.task = None
+        self.cleanup_task = None
         
         # Configure SSL context for legacy servers
         self.ssl_context = ssl.create_default_context()
@@ -39,6 +41,7 @@ class RSSService:
             
         self.running = True
         self.task = asyncio.create_task(self._check_feeds_loop())
+        self.cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("RSS feed service started")
 
     async def stop(self) -> None:
@@ -52,6 +55,14 @@ class RSSService:
                 await self.task
             except asyncio.CancelledError:
                 pass
+        
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
+            try:
+                await self.cleanup_task
+            except asyncio.CancelledError:
+                pass
+                
         logger.info("RSS feed service stopped")
 
     async def _check_feeds_loop(self) -> None:
@@ -63,6 +74,18 @@ class RSSService:
                 
             # Wait for next check interval
             await asyncio.sleep(self.check_interval)
+            
+    async def _cleanup_loop(self) -> None:
+        while self.running:
+            try:
+                # Wait for first interval before starting cleanup
+                await asyncio.sleep(CLEANUP_INTERVAL)
+                
+                # Run cleanup
+                deleted_count = await self.rss_management_service.cleanup_old_sent_posts(SENT_POSTS_RETENTION_DAYS)
+                logger.info(f"Scheduled cleanup completed: removed {deleted_count} old sent posts")
+            except Exception as e:
+                logger.error(f"Error during cleanup task: {e}", exc_info=True)
 
     async def _check_all_feeds(self) -> None:
         feeds = await self.rss_management_service.get_all_feeds()
@@ -136,9 +159,15 @@ class RSSService:
         # Try to get the publication date
         published_time = None
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
-            published_time = datetime(*entry.published_parsed[:6])
+            # Create datetime in UTC
+            published_time = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+            # Convert to UTC+3
+            published_time = published_time.astimezone(timezone(timedelta(hours=3)))
         elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-            published_time = datetime(*entry.updated_parsed[:6])
+            # Create datetime in UTC
+            published_time = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+            # Convert to UTC+3
+            published_time = published_time.astimezone(timezone(timedelta(hours=3)))
         
         return RSSPost(
             guid=entry_id,
@@ -153,14 +182,6 @@ class RSSService:
         if await self.rss_management_service.is_post_sent(post.guid, feed_id):
             return
         
-        # Check if the post is too old
-        current_time = datetime.now()
-        if post.published_time and (current_time - post.published_time).total_seconds() > self.post_age_limit:
-            # Mark the post as sent to avoid checking it again
-            await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
-            logger.info(f"Skipping old post from feed {feed_id}: {post.title}")
-            return
-            
         # Format the post message
         message = self._format_post_message(post)
         
@@ -172,7 +193,7 @@ class RSSService:
                 disable_web_page_preview=False
             )
             
-            # Mark the post as sent
+            # Mark the post as sent only after successfully sending it
             await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
             logger.info(f"Sent new post from feed {feed_id} to chat {chat_id}: {post.title}")
             
@@ -194,6 +215,7 @@ class RSSService:
             message += f"<a href='{post.link}'>Читать полностью</a>\n\n"
             
         if post.published_time:
-            message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
+            # Format with UTC+3 timezone
+            message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')} (UTC+3)</i>"
             
         return message 

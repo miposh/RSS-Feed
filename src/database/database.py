@@ -2,7 +2,7 @@ import aiosqlite
 import logging
 import os
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 from config.config import config
 from repositories.base_repository import BaseRepository
@@ -64,6 +64,7 @@ async def init_db() -> None:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     post_guid TEXT NOT NULL,
                     feed_id INTEGER NOT NULL,
+                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (feed_id) REFERENCES rss_feeds (id) ON DELETE CASCADE,
                     UNIQUE (post_guid, feed_id)
                 )

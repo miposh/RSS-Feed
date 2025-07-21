@@ -5,7 +5,6 @@ from datetime import datetime
 
 @dataclass
 class RSSPost:
-    """Model representing a post from an RSS feed."""
     guid: str
     title: str
     link: str

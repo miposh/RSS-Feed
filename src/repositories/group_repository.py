@@ -1,8 +1,7 @@
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 
 from repositories.base_repository import BaseRepository
-from models.group import Group
 
 logger = logging.getLogger(__name__)
 

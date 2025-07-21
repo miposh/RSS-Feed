@@ -28,7 +28,8 @@ class Config:
         # Set default values
         self._defaults = {
             "RSS_CHECK_INTERVAL": "300",  # 5 minutes in seconds
-            "POST_AGE_LIMIT": "86400",    # 24 hours in seconds
+            "SENT_POSTS_RETENTION_DAYS": "30",  # Keep sent posts for 90 days
+            "CLEANUP_INTERVAL": "86400",  # Run cleanup once a day (in seconds)
         }
 
     def _validate_required_vars(self) -> None:
