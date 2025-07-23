@@ -4,6 +4,8 @@ import asyncio
 import requests
 from datetime import datetime, timedelta, timezone
 import ssl
+from collections import defaultdict, deque
+from typing import Dict, Deque
 
 from aiogram import Bot
 
@@ -29,6 +31,10 @@ class RSSService:
         self.running = False
         self.task = None
         self.cleanup_task = None
+        
+        # Anti-flood system: track message timestamps per chat
+        self.message_timestamps: Dict[int, Deque[datetime]] = defaultdict(deque)
+        self.max_messages_per_minute = 20
         
         # Configure SSL context for legacy servers
         self.ssl_context = ssl.create_default_context()
@@ -182,6 +188,23 @@ class RSSService:
         if await self.rss_management_service.is_post_sent(post.guid, feed_id):
             return
         
+        # Only send posts that are less than 1 hour old
+        if post.published_time:
+            now = datetime.now(timezone(timedelta(hours=3)))  # UTC+3
+            time_diff = now - post.published_time
+            if time_diff > timedelta(hours=1):
+                logger.debug(f"Skipping old post from feed {feed_id}: {post.title} (published {time_diff} ago)")
+                # Mark as sent to avoid checking it again
+                await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
+                return
+        
+        # Check anti-flood limits
+        if not self._can_send_message(chat_id):
+            logger.warning(f"Anti-flood: skipping message to chat {chat_id}, rate limit exceeded")
+            # Mark as sent to avoid sending it later
+            await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
+            return
+        
         # Format the post message
         message = self._format_post_message(post)
         
@@ -192,6 +215,9 @@ class RSSService:
                 text=message,
                 disable_web_page_preview=False
             )
+            
+            # Track the sent message for anti-flood
+            self._track_sent_message(chat_id)
             
             # Mark the post as sent only after successfully sending it
             await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
@@ -216,6 +242,21 @@ class RSSService:
             
         if post.published_time:
             # Format with UTC+3 timezone
-            message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')} (UTC+3)</i>"
+            message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
             
-        return message 
+        return message
+    
+    def _can_send_message(self, chat_id: int) -> bool:
+        now = datetime.now()
+        timestamps = self.message_timestamps[chat_id]
+        
+        # Remove timestamps older than 1 minute
+        while timestamps and (now - timestamps[0]) > timedelta(minutes=1):
+            timestamps.popleft()
+        
+        # Check if we've reached the limit
+        return len(timestamps) < self.max_messages_per_minute
+    
+    def _track_sent_message(self, chat_id: int) -> None:
+        now = datetime.now()
+        self.message_timestamps[chat_id].append(now)

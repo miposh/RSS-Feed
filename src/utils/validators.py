@@ -27,7 +27,10 @@ async def validate_rss_feed(url: str) -> Tuple[bool, Optional[str]]:
     try:
         # Create a session with custom headers to avoid chunked transfer encoding issues
         session = requests.Session()
-        session.headers.update({'Accept-Encoding': 'identity'})  # Disable compression
+        session.headers.update({
+            'Accept-Encoding': 'identity',  # Disable compression
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
         
         # Use requests with streaming mode to handle chunked transfer encoding issues
         response = session.get(
@@ -48,8 +51,14 @@ async def validate_rss_feed(url: str) -> Tuple[bool, Optional[str]]:
                 
         feed = feedparser.parse(content)
         
+        # Allow feeds with minor parsing issues (bozo bit) but reject critical errors
         if feed.bozo and feed.bozo_exception:
-            return False, f"Feed parsing error: {feed.bozo_exception}"
+            # Only reject on critical parsing errors, not minor XML issues
+            error_str = str(feed.bozo_exception).lower()
+            if any(critical in error_str for critical in ['not well-formed', 'syntax error', 'mismatched tag']):
+                return False, f"Feed parsing error: {feed.bozo_exception}"
+            else:
+                logger.warning(f"Feed has minor parsing issues but is usable: {feed.bozo_exception}")
             
         if not hasattr(feed, 'feed') or not hasattr(feed, 'entries'):
             return False, "Invalid feed format"
