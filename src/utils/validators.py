@@ -25,11 +25,16 @@ async def validate_rss_feed(url: str) -> Tuple[bool, Optional[str]]:
         return False, "Invalid URL format"
     
     try:
-        # Create a session with custom headers to avoid chunked transfer encoding issues
+        # Create a session with browser-like headers to avoid blocking
         session = requests.Session()
         session.headers.update({
-            'Accept-Encoding': 'identity',  # Disable compression
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         })
         
         # Use requests with streaming mode to handle chunked transfer encoding issues
@@ -44,10 +49,25 @@ async def validate_rss_feed(url: str) -> Tuple[bool, Optional[str]]:
             return False, f"HTTP error: {response.status_code}"
         
         # Read content in chunks to avoid transfer encoding issues
-        content = ""
-        for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
+        content_bytes = b""
+        for chunk in response.iter_content(chunk_size=8192, decode_unicode=False):
             if chunk:
-                content += chunk
+                content_bytes += chunk
+        
+        # Decode the content with proper encoding handling
+        try:
+            content = content_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            # Try alternative encodings if UTF-8 fails
+            for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                try:
+                    content = content_bytes.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                # If all encodings fail, use errors='replace'
+                content = content_bytes.decode('utf-8', errors='replace')
                 
         feed = feedparser.parse(content)
         
