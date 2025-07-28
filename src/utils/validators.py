@@ -25,16 +25,25 @@ async def validate_rss_feed(url: str) -> Tuple[bool, Optional[str]]:
         return False, "Invalid URL format"
     
     try:
-        # Create a session with browser-like headers to avoid blocking
+        # Create a session with comprehensive browser-like headers to avoid blocking
         session = requests.Session()
         session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Cache-Control': 'max-age=0',
+            'Referer': 'https://www.google.com/',
         })
         
         # Use requests with streaming mode to handle chunked transfer encoding issues
@@ -45,7 +54,9 @@ async def validate_rss_feed(url: str) -> Tuple[bool, Optional[str]]:
             stream=True  # Use streaming mode
         )
         
-        if response.status_code != 200:
+        if response.status_code == 403:
+            return False, f"HTTP error: 403 (Forbidden) - Сайт блокирует автоматические запросы. Попробуйте другую RSS-ленту или обратитесь к администратору сайта."
+        elif response.status_code != 200:
             return False, f"HTTP error: {response.status_code}"
         
         # Read content in chunks to avoid transfer encoding issues

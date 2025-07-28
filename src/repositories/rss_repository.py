@@ -72,6 +72,17 @@ class RSSRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Failed to mark post {post_guid} as sent: {e}")
             return False
+    
+    async def has_sent_posts_for_feed(self, feed_id: int) -> bool:
+        try:
+            cursor = await self.execute(
+                "SELECT 1 FROM sent_posts WHERE feed_id = ? LIMIT 1",
+                (feed_id,)
+            )
+            return await cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Failed to check if feed {feed_id} has sent posts: {e}")
+            return False
             
     async def cleanup_old_sent_posts(self, days: int = 30) -> int:
         try:

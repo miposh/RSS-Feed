@@ -58,6 +58,9 @@ class RSSManagementService:
     
     async def mark_post_as_sent(self, post_guid: str, feed_id: int) -> bool:
         return await self.rss_repository.mark_post_as_sent(post_guid, feed_id)
+    
+    async def has_sent_posts_for_feed(self, feed_id: int) -> bool:
+        return await self.rss_repository.has_sent_posts_for_feed(feed_id)
         
     async def cleanup_old_sent_posts(self, days: int = 90) -> int:
         return await self.rss_repository.cleanup_old_sent_posts(days) 

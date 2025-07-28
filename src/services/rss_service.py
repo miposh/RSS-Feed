@@ -2,6 +2,7 @@ import feedparser
 import logging
 import asyncio
 import requests
+import re
 from datetime import datetime, timedelta, timezone
 import ssl
 from collections import defaultdict, deque
@@ -32,9 +33,9 @@ class RSSService:
         self.task = None
         self.cleanup_task = None
         
-        # Anti-flood system: track message timestamps per chat
+        # Anti-flood system: track message timestamps per chat (each group has independent limit)
         self.message_timestamps: Dict[int, Deque[datetime]] = defaultdict(deque)
-        self.max_messages_per_minute = 20
+        self.max_messages_per_minute_per_group = 20
         
         # Configure SSL context for legacy servers
         self.ssl_context = ssl.create_default_context()
@@ -111,33 +112,79 @@ class RSSService:
         logger.info(f"Processing feed {feed_url} for chat {chat_id}")
         
         try:
-            # Create a session with custom headers to avoid chunked transfer encoding issues
+            # Create a session with comprehensive browser-like headers to avoid blocking
             session = requests.Session()
             session.headers.update({
-                'Accept-Encoding': 'identity',  # Disable compression
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'  # Добавляем пользовательский User-Agent
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Encoding': 'gzip, deflate, br, zstd',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
+                'Cache-Control': 'max-age=0',
+                'Referer': 'https://www.google.com/',
             })
             
-            # Use requests with streaming mode to handle chunked transfer encoding issues
-            response = session.get(
-                feed_url, 
-                timeout=30, 
-                verify=False,
-                stream=True  # Use streaming mode
-            )
+            # Use requests with retry logic to handle connection issues
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = session.get(
+                        feed_url, 
+                        timeout=(10, 30),  # (connect_timeout, read_timeout)
+                        verify=False,
+                        stream=True
+                    )
+                    
+                    if response.status_code == 403:
+                        logger.warning(f"Failed to fetch feed {feed_url}: HTTP 403 (Forbidden) - Site is blocking automated requests")
+                        return
+                    elif response.status_code != 200:
+                        logger.warning(f"Failed to fetch feed {feed_url}: HTTP {response.status_code}")
+                        return
+                    
+                    # Read content in chunks with error handling
+                    content_bytes = b""
+                    for chunk in response.iter_content(chunk_size=8192, decode_unicode=False):
+                        if chunk:
+                            content_bytes += chunk
+                    
+                    # If we got here, the request was successful
+                    break
+                    
+                except (requests.exceptions.ChunkedEncodingError, 
+                        requests.exceptions.ConnectionError,
+                        requests.exceptions.Timeout) as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to fetch feed {feed_url} after {max_retries} attempts: {e}")
+                        return
+                    else:
+                        logger.warning(f"Attempt {attempt + 1} failed for feed {feed_url}: {e}. Retrying...")
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        continue
             
-            if response.status_code != 200:
-                logger.warning(f"Failed to fetch feed {feed_url}: HTTP {response.status_code}")
-                return
-            
-            # Read content in chunks to avoid transfer encoding issues
-            content = ""
-            for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
-                if chunk:
-                    # Ensure chunk is a string, convert from bytes if necessary
-                    if isinstance(chunk, bytes):
-                        chunk = chunk.decode('utf-8', errors='replace')
-                    content += chunk
+            # Decode the content with proper encoding handling
+            try:
+                content = content_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                # Try alternative encodings if UTF-8 fails
+                for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        content = content_bytes.decode(encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    # If all encodings fail, use errors='replace'
+                    content = content_bytes.decode('utf-8', errors='replace')
                     
             feed_data = feedparser.parse(content)
             
@@ -188,19 +235,16 @@ class RSSService:
         if await self.rss_management_service.is_post_sent(post.guid, feed_id):
             return
         
-        # Only send posts that are less than 1 hour old
-        if post.published_time:
-            now = datetime.now(timezone(timedelta(hours=3)))  # UTC+3
-            time_diff = now - post.published_time
-            if time_diff > timedelta(hours=1):
-                logger.debug(f"Skipping old post from feed {feed_id}: {post.title} (published {time_diff} ago)")
-                # Mark as sent to avoid checking it again
-                await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
-                return
+        # Check if this is a new feed (no sent posts yet) - skip sending old posts to avoid spam
+        has_sent_posts = await self.rss_management_service.has_sent_posts_for_feed(feed_id)
+        if not has_sent_posts:
+            logger.info(f"New feed {feed_id}: marking existing post as sent without sending: {post.title}")
+            await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
+            return
         
         # Check anti-flood limits
         if not self._can_send_message(chat_id):
-            logger.warning(f"Anti-flood: skipping message to chat {chat_id}, rate limit exceeded")
+            logger.warning(f"Anti-flood: skipping message to group {chat_id}, rate limit exceeded (max {self.max_messages_per_minute_per_group}/min per group)")
             # Mark as sent to avoid sending it later
             await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
             return
@@ -227,14 +271,17 @@ class RSSService:
             logger.error(f"Error sending post to chat {chat_id}: {e}", exc_info=True)
     
     def _format_post_message(self, post: RSSPost) -> str:
-        message = f"<b>{post.title}</b>\n\n"
+        message = f"<b>{self._clean_html_tags(post.title)}</b>\n\n"
         
         if post.summary:
+            # Clean HTML tags from summary
+            clean_summary = self._clean_html_tags(post.summary)
+            
             # Limit summary length
-            if len(post.summary) > 300:
-                summary = post.summary[:297] + "..."
+            if len(clean_summary) > 300:
+                summary = clean_summary[:297] + "..."
             else:
-                summary = post.summary
+                summary = clean_summary
             message += f"{summary}\n\n"
             
         if post.link:
@@ -246,6 +293,29 @@ class RSSService:
             
         return message
     
+    def _clean_html_tags(self, text: str) -> str:
+        """Remove unsupported HTML tags and clean text for Telegram"""
+        if not text:
+            return ""
+        
+        # Replace common HTML entities
+        text = text.replace('&amp;', '&')
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+        text = text.replace('&quot;', '"')
+        text = text.replace('&apos;', "'")
+        text = text.replace('&nbsp;', ' ')
+        
+        # Remove ALL HTML tags (including img, div, span, etc.)
+        # Only keep plain text for Telegram messages
+        text = re.sub(r'<[^>]+>', '', text)
+        
+        # Clean up multiple whitespaces and newlines
+        text = re.sub(r'\s+', ' ', text)
+        text = text.strip()
+        
+        return text
+    
     def _can_send_message(self, chat_id: int) -> bool:
         now = datetime.now()
         timestamps = self.message_timestamps[chat_id]
@@ -254,8 +324,8 @@ class RSSService:
         while timestamps and (now - timestamps[0]) > timedelta(minutes=1):
             timestamps.popleft()
         
-        # Check if we've reached the limit
-        return len(timestamps) < self.max_messages_per_minute
+        # Check if we've reached the limit for this specific group
+        return len(timestamps) < self.max_messages_per_minute_per_group
     
     def _track_sent_message(self, chat_id: int) -> None:
         now = datetime.now()
