@@ -13,24 +13,19 @@ class RSSManagementService:
         self.group_repository = group_repository
     
     async def add_feed(self, url: str, chat_id: int) -> Tuple[bool, Optional[str]]:
-        # Validate the RSS feed
         is_valid, error_message = await validate_rss_feed(url)
         if not is_valid:
             return False, error_message
         
-        # Get the group ID or create if it doesn't exist
         group_id = await self.group_repository.get_group_id(chat_id)
         if group_id is None:
-            # Try to add the group
             success = await self.group_repository.add_group(chat_id)
             if not success:
                 return False, "Failed to register group"
-            # Get the group ID again
             group_id = await self.group_repository.get_group_id(chat_id)
             if group_id is None:
                 return False, "Group registration failed"
         
-        # Add the feed
         success = await self.rss_repository.add_feed(url, group_id)
         return success, None if success else "Failed to add feed"
     

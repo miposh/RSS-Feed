@@ -16,11 +16,8 @@ from config.config import config
 
 logger = logging.getLogger(__name__)
 
-# Get constants from config
 RSS_CHECK_INTERVAL = config.get("RSS_CHECK_INTERVAL")
-# Default: keep sent posts for 30 days
 SENT_POSTS_RETENTION_DAYS = int(config.get("SENT_POSTS_RETENTION_DAYS", 30))
-# Default: run cleanup once a day (in seconds)
 CLEANUP_INTERVAL = int(config.get("CLEANUP_INTERVAL", 86400))
 
 class RSSService:
@@ -33,11 +30,9 @@ class RSSService:
         self.task = None
         self.cleanup_task = None
         
-        # Anti-flood system: track message timestamps per chat (each group has independent limit)
         self.message_timestamps: Dict[int, Deque[datetime]] = defaultdict(deque)
         self.max_messages_per_minute_per_group = 20
         
-        # Configure SSL context for legacy servers
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
@@ -79,16 +74,13 @@ class RSSService:
             except Exception as e:
                 logger.error(f"Error checking feeds: {e}", exc_info=True)
                 
-            # Wait for next check interval
             await asyncio.sleep(self.check_interval)
             
     async def _cleanup_loop(self) -> None:
         while self.running:
             try:
-                # Wait for first interval before starting cleanup
                 await asyncio.sleep(CLEANUP_INTERVAL)
                 
-                # Run cleanup
                 deleted_count = await self.rss_management_service.cleanup_old_sent_posts(SENT_POSTS_RETENTION_DAYS)
                 logger.info(f"Scheduled cleanup completed: removed {deleted_count} old sent posts")
             except Exception as e:
@@ -112,7 +104,6 @@ class RSSService:
         logger.info(f"Processing feed {feed_url} for chat {chat_id}")
         
         try:
-            # Create a session with universal browser-like headers
             session = requests.Session()
             session.headers.update({
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -123,13 +114,12 @@ class RSSService:
                 'Upgrade-Insecure-Requests': '1',
             })
             
-            # Use requests with retry logic to handle connection issues
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = session.get(
                         feed_url, 
-                        timeout=(10, 30),  # (connect_timeout, read_timeout)
+                        timeout=(10, 30), 
                         verify=False,
                         stream=True
                     )
@@ -141,13 +131,11 @@ class RSSService:
                         logger.warning(f"Failed to fetch feed {feed_url}: HTTP {response.status_code}")
                         return
                     
-                    # Read content in chunks with error handling
                     content_bytes = b""
                     for chunk in response.iter_content(chunk_size=8192, decode_unicode=False):
                         if chunk:
                             content_bytes += chunk
                     
-                    # If we got here, the request was successful
                     break
                     
                 except (requests.exceptions.ChunkedEncodingError, 
@@ -161,11 +149,9 @@ class RSSService:
                         await asyncio.sleep(2 ** attempt)  # Exponential backoff
                         continue
             
-            # Decode the content with proper encoding handling
             try:
                 content = content_bytes.decode('utf-8')
             except UnicodeDecodeError:
-                # Try alternative encodings if UTF-8 fails
                 for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
                     try:
                         content = content_bytes.decode(encoding)
@@ -173,7 +159,6 @@ class RSSService:
                     except UnicodeDecodeError:
                         continue
                 else:
-                    # If all encodings fail, use errors='replace'
                     content = content_bytes.decode('utf-8', errors='replace')
                     
             feed_data = feedparser.parse(content)
@@ -182,7 +167,6 @@ class RSSService:
                 logger.warning(f"No entries in feed {feed_url}")
                 return
             
-            # Process in reverse order to send oldest first
             for entry in reversed(feed_data.entries):
                 post = self._parse_entry(entry)
                 await self._process_post(post, feed_id, chat_id)
@@ -193,18 +177,14 @@ class RSSService:
             logger.error(f"Error processing feed {feed_url}: {e}", exc_info=True)
     
     def _parse_entry(self, entry) -> RSSPost:
-        # Use the entry's guid/id or link as unique identifier
         entry_id = getattr(entry, 'guid', getattr(entry, 'id', entry.link))
         title = getattr(entry, 'title', 'No title')
         link = getattr(entry, 'link', '')
         summary = getattr(entry, 'summary', getattr(entry, 'description', ''))
         
-        # Try to get the publication date
         published_time = None
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
-            # Create datetime in UTC
             published_time = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-            # Convert to UTC+3
             published_time = published_time.astimezone(timezone(timedelta(hours=3)))
         elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
             # Create datetime in UTC
@@ -221,39 +201,31 @@ class RSSService:
         )
     
     async def _process_post(self, post: RSSPost, feed_id: int, chat_id: int) -> None:
-        # Check if we've already sent this post
         if await self.rss_management_service.is_post_sent(post.guid, feed_id):
             return
         
-        # Check if this is a new feed (no sent posts yet) - skip sending old posts to avoid spam
         has_sent_posts = await self.rss_management_service.has_sent_posts_for_feed(feed_id)
         if not has_sent_posts:
             logger.info(f"New feed {feed_id}: marking existing post as sent without sending: {post.title}")
             await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
             return
         
-        # Check anti-flood limits
         if not self._can_send_message(chat_id):
             logger.warning(f"Anti-flood: skipping message to group {chat_id}, rate limit exceeded (max {self.max_messages_per_minute_per_group}/min per group)")
-            # Mark as sent to avoid sending it later
             await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
             return
         
-        # Format the post message
         message = self._format_post_message(post)
         
         try:
-            # Send the message to the chat
             await self.bot.send_message(
                 chat_id=chat_id,
                 text=message,
                 disable_web_page_preview=False
             )
             
-            # Track the sent message for anti-flood
             self._track_sent_message(chat_id)
             
-            # Mark the post as sent only after successfully sending it
             await self.rss_management_service.mark_post_as_sent(post.guid, feed_id)
             logger.info(f"Sent new post from feed {feed_id} to chat {chat_id}: {post.title}")
             
@@ -264,10 +236,8 @@ class RSSService:
         message = f"<b>{self._clean_html_tags(post.title)}</b>\n\n"
         
         if post.summary:
-            # Clean HTML tags from summary
             clean_summary = self._clean_html_tags(post.summary)
             
-            # Limit summary length
             if len(clean_summary) > 300:
                 summary = clean_summary[:297] + "..."
             else:
@@ -278,7 +248,6 @@ class RSSService:
             message += f"<a href='{post.link}'>Читать полностью</a>\n\n"
             
         if post.published_time:
-            # Format with UTC+3 timezone
             message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
             
         return message
@@ -288,7 +257,6 @@ class RSSService:
         if not text:
             return ""
         
-        # Replace common HTML entities
         text = text.replace('&amp;', '&')
         text = text.replace('&lt;', '<')
         text = text.replace('&gt;', '>')
@@ -296,11 +264,8 @@ class RSSService:
         text = text.replace('&apos;', "'")
         text = text.replace('&nbsp;', ' ')
         
-        # Remove ALL HTML tags (including img, div, span, etc.)
-        # Only keep plain text for Telegram messages
         text = re.sub(r'<[^>]+>', '', text)
         
-        # Clean up multiple whitespaces and newlines
         text = re.sub(r'\s+', ' ', text)
         text = text.strip()
         
@@ -310,11 +275,9 @@ class RSSService:
         now = datetime.now()
         timestamps = self.message_timestamps[chat_id]
         
-        # Remove timestamps older than 1 minute
         while timestamps and (now - timestamps[0]) > timedelta(minutes=1):
             timestamps.popleft()
         
-        # Check if we've reached the limit for this specific group
         return len(timestamps) < self.max_messages_per_minute_per_group
     
     def _track_sent_message(self, chat_id: int) -> None:

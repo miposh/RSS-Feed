@@ -12,11 +12,9 @@ from config.config import config
 
 logger = logging.getLogger(__name__)
 
-# Create router for group messages
 group_router = Router()
 group_router.message.filter(F.chat.type.in_({"group", "supergroup"}))
 
-# Create repositories and services
 group_repo = GroupRepository(config.db_path)
 rss_repo = RSSRepository(config.db_path)
 rss_service = RSSManagementService(rss_repo, group_repo)
@@ -33,7 +31,6 @@ async def cmd_start(message: Message) -> None:
 
 @group_router.message(Command("add"))
 async def cmd_add_rss(message: Message) -> None:
-    # Extract URL from the message
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer("❌ Пожалуйста, укажите URL RSS-ленты.\nПример: /add https://kod.ru/rss")
@@ -41,12 +38,10 @@ async def cmd_add_rss(message: Message) -> None:
     
     url = parts[1].strip()
     
-    # Validate URL format
     if not is_valid_url(url):
         await message.answer("❌ Неверный формат URL. Пожалуйста, укажите корректный URL.")
         return
     
-    # Add RSS feed to the database
     success, error_message = await rss_service.add_feed(url, message.chat.id)
     
     if success:
@@ -57,11 +52,9 @@ async def cmd_add_rss(message: Message) -> None:
 
 @group_router.message(Command("list"))
 async def cmd_list_rss(message: Message) -> None:
-    # Get list of RSS feeds for this group
     feeds = await rss_service.get_feeds_for_chat(message.chat.id)
     
     if feeds:
-        # Format the list with numbers
         feeds_text = "\n".join(f"{i+1}. {feed}" for i, feed in enumerate(feeds))
         await message.answer(f"📋 Список добавленных RSS-лент:\n\n{feeds_text}")
     else:
@@ -69,7 +62,6 @@ async def cmd_list_rss(message: Message) -> None:
 
 @group_router.message(Command("remove"))
 async def cmd_remove_rss(message: Message) -> None:
-    # Extract URL from the message
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer("❌ Пожалуйста, укажите URL RSS-ленты для удаления.\nПример: /remove https://kod.ru/rss")
@@ -77,7 +69,6 @@ async def cmd_remove_rss(message: Message) -> None:
     
     url = parts[1].strip()
     
-    # Remove RSS feed from the database
     success = await rss_service.remove_feed(url, message.chat.id)
     if success:
         await message.answer(f"✅ RSS-лента {url} удалена.")

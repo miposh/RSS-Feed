@@ -9,7 +9,6 @@ class GroupRepository(BaseRepository):
     async def add_group(self, chat_id: int) -> bool:
         
         try:
-            # Check if the group already exists
             existing_id = await self.get_group_id(chat_id)
             if existing_id is not None:
                 logger.info(f"Group {chat_id} already exists, skipping addition")

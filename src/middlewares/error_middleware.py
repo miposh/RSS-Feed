@@ -16,10 +16,8 @@ class ErrorHandlingMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except TelegramAPIError as e:
-            # Handle Telegram API errors
             logger.error(f"Telegram API error: {e}", exc_info=True)
             
-            # Try to notify the user if possible
             if isinstance(event, Message):
                 try:
                     await event.answer("Произошла ошибка при обработке запроса. Пожалуйста, попробуйте позже.")
@@ -33,10 +31,8 @@ class ErrorHandlingMiddleware(BaseMiddleware):
                     
             return None
         except Exception as e:
-            # Handle other errors
             logger.error(f"Unhandled exception: {e}", exc_info=True)
             
-            # Try to notify the user if possible
             if isinstance(event, Message):
                 try:
                     await event.answer("Произошла внутренняя ошибка. Администраторы уведомлены.")

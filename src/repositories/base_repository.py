@@ -25,7 +25,6 @@ class BaseRepository:
     
     @staticmethod
     async def close_connection() -> None:
-        """Close the database connection pool."""
         if BaseRepository._connection_pool is not None:
             await BaseRepository._connection_pool.close()
             BaseRepository._connection_pool = None

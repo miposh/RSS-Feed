@@ -5,16 +5,12 @@ from pathlib import Path
 from typing import List, Tuple
 
 from config.config import config
-from repositories.base_repository import BaseRepository
 
-# Setup logging
 logger = logging.getLogger(__name__)
 
-# Get database path from config
 DB_PATH = config.db_path
 
 async def init_db() -> None:
-    # Check if the database directory exists
     db_path = Path(DB_PATH)
     db_dir = db_path.parent
     
@@ -27,7 +23,6 @@ async def init_db() -> None:
             logger.error(f"Error creating directory {db_dir}: {e}", exc_info=True)
             raise
     
-    # Check write permissions
     try:
         if not os.access(db_dir, os.W_OK):
             logger.error(f"No write permission for directory {db_dir}")
@@ -37,13 +32,10 @@ async def init_db() -> None:
         logger.error(f"Error checking access permissions: {e}", exc_info=True)
         raise
     
-    # Initialize database schema
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            # Enable foreign keys
             await db.execute("PRAGMA foreign_keys = ON")
             
-            # Create tables
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS groups (
                     id INTEGER PRIMARY KEY,
@@ -75,10 +67,6 @@ async def init_db() -> None:
         logger.error(f"Error initializing database: {e}", exc_info=True)
         raise
 
-# Legacy functions that use the new repositories
-# These are kept for backward compatibility
-# New code should use the repository classes directly
-
 async def add_group(chat_id: int) -> bool:
     from src.repositories.group_repository import GroupRepository
     repo = GroupRepository(DB_PATH)
@@ -96,12 +84,10 @@ async def add_rss_feed(url: str, chat_id: int) -> bool:
     group_repo = GroupRepository(DB_PATH)
     rss_repo = RSSRepository(DB_PATH)
     
-    # Get the group ID
     group_id = await group_repo.get_group_id(chat_id)
     if group_id is None:
         return False
     
-    # Add the feed
     return await rss_repo.add_feed(url, group_id)
 
 async def remove_rss_feed(url: str, chat_id: int) -> bool:
@@ -111,12 +97,10 @@ async def remove_rss_feed(url: str, chat_id: int) -> bool:
     group_repo = GroupRepository(DB_PATH)
     rss_repo = RSSRepository(DB_PATH)
     
-    # Get the group ID
     group_id = await group_repo.get_group_id(chat_id)
     if group_id is None:
         return False
     
-    # Remove the feed
     return await rss_repo.remove_feed(url, group_id)
 
 async def get_rss_feeds_for_group(chat_id: int) -> List[str]:
@@ -126,12 +110,10 @@ async def get_rss_feeds_for_group(chat_id: int) -> List[str]:
     group_repo = GroupRepository(DB_PATH)
     rss_repo = RSSRepository(DB_PATH)
     
-    # Get the group ID
     group_id = await group_repo.get_group_id(chat_id)
     if group_id is None:
         return []
     
-    # Get the feeds
     return await rss_repo.get_feeds_for_group(group_id)
 
 async def get_all_feeds() -> List[Tuple[int, str, int]]:
