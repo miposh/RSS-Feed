@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from config.config import config
+from database.schema import CREATE_TABLES_SQL, CREATE_TRIGGERS_SQL, PRAGMA_SETTINGS
 
 logger = logging.getLogger(__name__)
 
@@ -34,35 +35,16 @@ async def init_db() -> None:
     
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("PRAGMA foreign_keys = ON")
+            for pragma in PRAGMA_SETTINGS.strip().split(';'):
+                if pragma.strip():
+                    await db.execute(pragma.strip())
             
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS groups (
-                    id INTEGER PRIMARY KEY,
-                    chat_id INTEGER UNIQUE NOT NULL
-                )
-            """)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS rss_feeds (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    url TEXT NOT NULL,
-                    group_id INTEGER NOT NULL,
-                    FOREIGN KEY (group_id) REFERENCES groups (id) ON DELETE CASCADE,
-                    UNIQUE (url, group_id)
-                )
-            """)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS sent_posts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    post_guid TEXT NOT NULL,
-                    feed_id INTEGER NOT NULL,
-                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (feed_id) REFERENCES rss_feeds (id) ON DELETE CASCADE,
-                    UNIQUE (post_guid, feed_id)
-                )
-            """)
+            await db.executescript(CREATE_TABLES_SQL)
+            
+            await db.executescript(CREATE_TRIGGERS_SQL)
+            
             await db.commit()
-            logger.info("Database schema initialized successfully")
+            logger.info("Database schema initialized successfully with new structure")
     except Exception as e:
         logger.error(f"Error initializing database: {e}", exc_info=True)
         raise

@@ -1,8 +1,9 @@
 import logging
 from urllib.parse import urlparse
-import feedparser
-import requests
 from typing import Tuple, Optional
+
+from fetcher.http_client import get_http_client
+from parser.rss_parser import parse_rss_feed
 
 logger = logging.getLogger(__name__)
 
@@ -23,60 +24,26 @@ async def validate_rss_feed(url: str) -> Tuple[bool, Optional[str]]:
         return False, "Invalid URL format"
     
     try:
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        })
+        async with get_http_client() as http_client:
+            content_bytes, status, error = await http_client.fetch(
+                url,
+                use_cache=False,
+                verify_ssl=False
+            )
         
-        response = session.get(
-            url, 
-            timeout=10, 
-            verify=False,
-            stream=True
-        )
+        if status == 403:
+            return False, "HTTP error: 403 (Forbidden) - Сайт блокирует автоматические запросы. Попробуйте другую RSS-ленту или обратитесь к администратору сайта."
         
-        if response.status_code == 403:
-            return False, f"HTTP error: 403 (Forbidden) - Сайт блокирует автоматические запросы. Попробуйте другую RSS-ленту или обратитесь к администратору сайта."
-        elif response.status_code != 200:
-            return False, f"HTTP error: {response.status_code}"
+        if status != 200 or content_bytes is None:
+            return False, f"HTTP error: {status} - {error}"
         
-        content_bytes = b""
-        for chunk in response.iter_content(chunk_size=8192, decode_unicode=False):
-            if chunk:
-                content_bytes += chunk
+        posts = await parse_rss_feed(content_bytes)
         
-        try:
-            content = content_bytes.decode('utf-8')
-        except UnicodeDecodeError:
-            for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
-                try:
-                    content = content_bytes.decode(encoding)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            else:
-                content = content_bytes.decode('utf-8', errors='replace')
-                
-        feed = feedparser.parse(content)
+        if posts is None:
+            return False, "Failed to parse feed - invalid format or malformed XML"
         
-        if feed.bozo and feed.bozo_exception:
-            error_str = str(feed.bozo_exception).lower()
-            if any(critical in error_str for critical in ['not well-formed', 'syntax error', 'mismatched tag']):
-                return False, f"Feed parsing error: {feed.bozo_exception}"
-            else:
-                logger.warning(f"Feed has minor parsing issues but is usable: {feed.bozo_exception}")
-            
-        if not hasattr(feed, 'feed') or not hasattr(feed, 'entries'):
-            return False, "Invalid feed format"
-            
         return True, None
-    except requests.exceptions.RequestException as e:
-        return False, f"Connection error: {e}"
+        
     except Exception as e:
-        logger.error(f"RSS validation error: {e}")
+        logger.error(f"RSS validation error: {e}", exc_info=True)
         return False, f"Validation error: {str(e)}" 

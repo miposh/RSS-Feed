@@ -1,5 +1,7 @@
 aiogram
+aiogram-dialog
 aiosqlite
 feedparser
 python-dotenv
 requests
+aiohttp

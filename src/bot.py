@@ -1,23 +1,23 @@
 import asyncio
 import logging
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeDefault
+from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram_dialog import setup_dialogs
 
 from config.config import config
 from handlers.group_handlers import group_router
+from handlers.private_handlers import private_router
+from dialogs.feed_management_dialog import feed_management_dialog
 from middlewares.chat_type_middleware import ChatTypeMiddleware
 from middlewares.error_middleware import ErrorHandlingMiddleware
+from middlewares.user_tracking import UserTrackingMiddleware
 from database.database import init_db
-from services.rss_service import RSSService
-from repositories.group_repository import GroupRepository
-from repositories.rss_repository import RSSRepository
-from services.rss_management_service import RSSManagementService
+from services.new_rss_service import NewRSSService
+from services.chat_service import ChatService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,26 +27,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def set_bot_commands(bot: Bot) -> None:
-    commands = [
-        BotCommand(command="start", description="перезапуск бота"),
+    # Commands for groups
+    group_commands = [
+        BotCommand(command="start", description="информация о боте"),
         BotCommand(command="add", description="добавить RSS-канал"),
         BotCommand(command="list", description="показать список RSS-каналов"),
         BotCommand(command="remove", description="удалить RSS-канал"),
     ]
+    
+    # Commands for private chats
+    private_commands = [
+        BotCommand(command="start", description="открыть меню управления"),
+        BotCommand(command="manage", description="управление фидами"),
+        BotCommand(command="help", description="помощь"),
+    ]
 
-    await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+    await bot.set_my_commands(group_commands, scope=BotCommandScopeDefault())
+    await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
     logger.info("Bot commands have been set successfully")
 
-async def on_startup(bot: Bot) -> RSSService:
+async def on_startup(bot: Bot) -> NewRSSService:
     logger.info("Bot is starting...")
     await set_bot_commands(bot)
     await init_db()
-    group_repo = GroupRepository(config.db_path)
-    rss_repo = RSSRepository(config.db_path)
-    rss_management_service = RSSManagementService(rss_repo, group_repo)
     
-    rss_service = RSSService(bot, rss_management_service)
+    chat_service = ChatService()
+    
+    rss_service = NewRSSService(bot, chat_service)
     await rss_service.start()
+    
+    logger.info("Bot started successfully with new schema")
     return rss_service
 
 
@@ -68,12 +78,19 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     
-    dp = Dispatcher()
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
     
     dp.update.outer_middleware(ErrorHandlingMiddleware())
     dp.message.middleware(ChatTypeMiddleware())
+    dp.message.middleware(UserTrackingMiddleware())
+    dp.callback_query.middleware(UserTrackingMiddleware())
     
+    dp.include_router(private_router)
     dp.include_router(group_router)
+    dp.include_router(feed_management_dialog)
+    
+    setup_dialogs(dp)
     
     rss_service = None
     try:
