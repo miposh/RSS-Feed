@@ -11,34 +11,20 @@ from models.rss_post import RSSPost
 logger = logging.getLogger(__name__)
 
 
-class RSSParser:
-    """Parser for RSS/Atom feeds."""
-    
+class RSSParser:    
     @staticmethod
     def decode_content(content_bytes: bytes) -> str:
-        """
-        Decode feed content with fallback encodings.
-        
-        Args:
-            content_bytes: Raw feed content
-        
-        Returns:
-            Decoded string content
-        """
-        # Try UTF-8 first
         try:
             return content_bytes.decode('utf-8')
         except UnicodeDecodeError:
             pass
         
-        # Fallback encodings
         for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
             try:
                 return content_bytes.decode(encoding)
             except UnicodeDecodeError:
                 continue
         
-        # Last resort: replace errors
         logger.warning(
             "Failed to decode with known encodings, using replacement",
             extra={"size_bytes": len(content_bytes)}
@@ -47,19 +33,9 @@ class RSSParser:
     
     @staticmethod
     def parse_feed(content: str) -> Optional[feedparser.FeedParserDict]:
-        """
-        Parse RSS/Atom feed from string content.
-        
-        Args:
-            content: Feed content as string
-        
-        Returns:
-            Parsed feed data or None on error
-        """
         try:
             feed_data = feedparser.parse(content)
             
-            # Check for critical parsing errors
             if feed_data.bozo and feed_data.bozo_exception:
                 error_str = str(feed_data.bozo_exception).lower()
                 critical_errors = ['not well-formed', 'syntax error', 'mismatched tag']
@@ -76,7 +52,6 @@ class RSSParser:
                         extra={"error": str(feed_data.bozo_exception)}
                     )
             
-            # Validate feed structure
             if not hasattr(feed_data, 'entries'):
                 logger.error("Feed has no entries attribute")
                 return None
@@ -92,15 +67,6 @@ class RSSParser:
     
     @staticmethod
     def extract_posts(feed_data: feedparser.FeedParserDict) -> List[RSSPost]:
-        """
-        Extract posts from parsed feed data.
-        
-        Args:
-            feed_data: Parsed feed data from feedparser
-        
-        Returns:
-            List of RSSPost objects
-        """
         posts = []
         
         for entry in feed_data.entries:
@@ -119,24 +85,23 @@ class RSSParser:
     
     @staticmethod
     def _parse_entry(entry) -> RSSPost:
-        """
-        Parse a single feed entry into RSSPost.
-        
-        Args:
-            entry: Feed entry from feedparser
-        
-        Returns:
-            RSSPost object
-        """
-        # Extract GUID (prefer guid > id > link)
         entry_id = getattr(entry, 'guid', getattr(entry, 'id', entry.link))
         
-        # Extract basic fields
         title = getattr(entry, 'title', 'No title')
         link = getattr(entry, 'link', '')
         summary = getattr(entry, 'summary', getattr(entry, 'description', ''))
         
-        # Parse published time
+        content = ''
+        if hasattr(entry, 'content') and entry.content:
+            try:
+                content = entry.content[0].get('value', '')
+            except (IndexError, AttributeError, TypeError):
+                logger.warning("Failed to extract content from entry")
+        
+        # If no content, try content_encoded (some RSS feeds use this)
+        if not content and hasattr(entry, 'content_encoded'):
+            content = getattr(entry, 'content_encoded', '')
+        
         published_time = RSSParser._parse_published_time(entry)
         
         return RSSPost(
@@ -149,26 +114,13 @@ class RSSParser:
     
     @staticmethod
     def _parse_published_time(entry) -> Optional[datetime]:
-        """
-        Extract and parse published time from entry.
-        
-        Args:
-            entry: Feed entry
-        
-        Returns:
-            Datetime in UTC+3 timezone or None
-        """
-        # Try published_parsed first
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
             try:
-                # Create datetime in UTC
                 dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-                # Convert to UTC+3
                 return dt.astimezone(timezone(timedelta(hours=3)))
             except (ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse published_parsed: {e}")
         
-        # Fallback to updated_parsed
         if hasattr(entry, 'updated_parsed') and entry.updated_parsed:
             try:
                 dt = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
@@ -180,29 +132,16 @@ class RSSParser:
 
 
 async def parse_rss_feed(content_bytes: bytes) -> Optional[List[RSSPost]]:
-    """
-    High-level function to parse RSS feed from bytes.
-    
-    Args:
-        content_bytes: Raw feed content
-    
-    Returns:
-        List of RSSPost objects or None on error
-    """
-    # Decode content
     content = RSSParser.decode_content(content_bytes)
     
-    # Parse feed
     feed_data = RSSParser.parse_feed(content)
     if not feed_data:
         return None
     
-    # Check if feed has entries
     if not feed_data.entries:
         logger.warning("Feed has no entries")
         return []
     
-    # Extract posts
     posts = RSSParser.extract_posts(feed_data)
     
     logger.info(

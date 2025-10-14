@@ -160,8 +160,10 @@ class NewRSSService:
         feed_id: int,
         chat_telegram_ids: list
     ) -> None:
+        # Use content for hash if available, otherwise summary
+        text_for_hash = post.content if post.content else post.summary
         content_hash = hashlib.md5(
-            f"{post.title}{post.link}{post.summary}".encode()
+            f"{post.title}{post.link}{text_for_hash}".encode()
         ).hexdigest()
         
         message = self._format_post_message(post)
@@ -210,13 +212,21 @@ class NewRSSService:
         
         message = f"<b>{clean_html(post.title)}</b>\n\n"
         
-        if post.summary:
-            clean_summary = clean_html(post.summary)
-            if len(clean_summary) > 300:
-                summary = clean_summary[:297] + "..."
+        # Use content if available, otherwise fall back to summary
+        text_to_use = post.content if post.content else post.summary
+        
+        if text_to_use:
+            clean_text = clean_html(text_to_use)
+            # Limit to 4080 characters as requested
+            max_text_length = 4080
+            # Reserve space for title, link, and timestamp (approx 150 chars)
+            max_content_length = max_text_length - len(message) - 150
+            
+            if len(clean_text) > max_content_length:
+                text = clean_text[:max_content_length - 3] + "..."
             else:
-                summary = clean_summary
-            message += f"{summary}\n\n"
+                text = clean_text
+            message += f"{text}\n\n"
         
         if post.link:
             message += f"<a href='{post.link}'>Читать полностью</a>\n\n"

@@ -9,5 +9,6 @@ class RSSPost:
     title: str
     link: str
     summary: str = ""
+    content: str = ""
     published_time: Optional[datetime] = None
     feed_id: int = 0 
