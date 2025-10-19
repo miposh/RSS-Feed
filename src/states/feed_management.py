@@ -7,3 +7,4 @@ class FeedManagementSG(StatesGroup):
     add_feed = State()
     manage_feeds = State()
     confirm_delete = State()
+    delete_feed = State()

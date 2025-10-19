@@ -65,9 +65,7 @@ async def get_chat_info(dialog_manager: DialogManager, **kwargs) -> Dict[str, An
     if not chat_data:
         return {'error': 'No chat selected'}
     
-    chat_repo = ChatRepository(config.db_path)
     feed_repo = FeedRepository(config.db_path)
-    sub_repo = SubscriptionRepository(config.db_path)
     
     # Get chat info
     chat_internal_id = chat_data['internal_id']
@@ -75,7 +73,6 @@ async def get_chat_info(dialog_manager: DialogManager, **kwargs) -> Dict[str, An
     
     # Get feeds for this chat
     feeds = await feed_repo.get_feeds_for_chat(chat_internal_id)
-    subscriptions = await sub_repo.get_subscriptions_for_chat(chat_internal_id)
     
     feed_list = []
     for feed in feeds:
@@ -274,6 +271,40 @@ async def on_toggle_feed(
         await callback.answer("❌ Ошибка")
 
 
+async def on_delete_feed_clicked(
+    callback: CallbackQuery,
+    button: Button,
+    dialog_manager: DialogManager
+):
+    """Go to feed deletion state"""
+    await dialog_manager.switch_to(FeedManagementSG.delete_feed)
+
+
+async def on_feed_delete_selected(
+    callback: CallbackQuery,
+    widget: Select,
+    dialog_manager: DialogManager,
+    item_id: str
+):
+    """Delete selected feed from chat"""
+    feed_id = int(item_id)
+    sub_repo = SubscriptionRepository(config.db_path)
+    
+    chat_data = dialog_manager.dialog_data.get('selected_chat')
+    if not chat_data:
+        await callback.answer("❌ Ошибка: чат не выбран")
+        return
+    
+    chat_internal_id = chat_data['internal_id']
+    success = await sub_repo.unsubscribe(chat_internal_id, feed_id)
+    
+    if success:
+        await callback.answer("🗑 Фид удалён из чата")
+        await dialog_manager.switch_to(FeedManagementSG.manage_feeds)
+    else:
+        await callback.answer("❌ Ошибка при удалении")
+
+
 # ============================================================================
 # Dialog Windows
 # ============================================================================
@@ -335,10 +366,17 @@ manage_feeds_window = Window(
         items="feeds",
         on_click=on_toggle_feed
     ),
-    Button(
-        Const("➕ Добавить новый фид"),
-        id="add_feed_btn",
-        on_click=on_add_feed_clicked
+    Row(
+        Button(
+            Const("➕ Добавить фид"),
+            id="add_feed_btn",
+            on_click=on_add_feed_clicked
+        ),
+        Button(
+            Const("🗑 Удалить фид"),
+            id="delete_feed_btn",
+            on_click=on_delete_feed_clicked
+        ),
     ),
     Back(Const("🔙 Назад")),
     state=FeedManagementSG.manage_feeds,
@@ -369,11 +407,27 @@ confirm_delete_window = Window(
     getter=get_chat_info
 )
 
+delete_feed_window = Window(
+    Format("<b>🗑 Удаление RSS-фида</b>\n\n"
+           "Выберите фид для удаления из <b>{chat_title}</b>:"),
+    Select(
+        Format("{item['title'][:50]}"),
+        id="feed_delete_select",
+        item_id_getter=lambda x: str(x['id']),
+        items="feeds",
+        on_click=on_feed_delete_selected
+    ),
+    Back(Const("🔙 Отмена")),
+    state=FeedManagementSG.delete_feed,
+    getter=get_chat_info
+)
+
 # Create dialog
 feed_management_dialog = Dialog(
     select_chat_window,
     chat_menu_window,
     manage_feeds_window,
     add_feed_window,
-    confirm_delete_window
+    confirm_delete_window,
+    delete_feed_window
 )

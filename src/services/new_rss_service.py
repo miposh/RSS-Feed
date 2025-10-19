@@ -2,7 +2,7 @@ import logging
 import asyncio
 import hashlib
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from typing import Dict, Deque
 
@@ -14,9 +14,11 @@ from models.rss_post import RSSPost
 from config.config import config
 from fetcher.http_client import get_http_client, close_http_client
 from parser.rss_parser import parse_rss_feed
+from parser.article_extractor import extract_article_content
 from repositories.feed_repository import FeedRepository
 from repositories.chat_repository import ChatRepository
 from repositories.subscription_repository import SubscriptionRepository
+from services.gemini_service import rewrite_with_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,16 @@ class NewRSSService:
         # Rate limiting for Telegram
         self.message_timestamps: Dict[int, Deque[datetime]] = defaultdict(deque)
         self.max_messages_per_minute_per_group = 20
+        
+        # Gemini AI settings
+        self.gemini_enabled = config.get("GEMINI_ENABLED", "false").lower() == "true"
+        self.gemini_api_key = config.get("GEMINI_API_KEY")
+        if self.gemini_enabled and not self.gemini_api_key:
+            logger.warning("Gemini включен, но API ключ не найден")
+            self.gemini_enabled = False
+        
+        # ScraperAPI settings for full article extraction
+        self.scraper_enabled = config.get("SCRAPER_ENABLED", "false").lower() == "true"
     
     async def start(self) -> None:
         if self.running:
@@ -49,7 +61,7 @@ class NewRSSService:
         self.running = True
         self.task = asyncio.create_task(self._check_feeds_loop())
         self.cleanup_task = asyncio.create_task(self._cleanup_loop())
-        logger.info("RSS feed service started with new schema")
+        logger.info("RSS feed service started (parsing news from last 1 hour)")
     
     async def stop(self) -> None:
         if not self.running:
@@ -142,6 +154,19 @@ class NewRSSService:
                 return
             
             for post in posts:
+                # Пропускаем новости старше 1 часа
+                if post.published_time:
+                    utc_plus_3 = timezone(timedelta(hours=3))
+                    now = datetime.now(utc_plus_3)
+                    one_hour_ago = now - timedelta(hours=1)
+                    
+                    if post.published_time < one_hour_ago:
+                        logger.debug(
+                            f"Пропускаем старую новость (>1ч): {post.title[:50]} "
+                            f"(опубликована {post.published_time.strftime('%Y-%m-%d %H:%M')})"
+                        )
+                        continue
+                
                 await self._process_post(post, feed_id, chat_ids)
             
             await self.feed_repo.update_feed_metadata(
@@ -160,13 +185,26 @@ class NewRSSService:
         feed_id: int,
         chat_telegram_ids: list
     ) -> None:
-        # Use content for hash if available, otherwise summary
+        # Extract full article content if ScraperAPI is enabled
+        if self.scraper_enabled and post.link:
+            try:
+                logger.debug(f"Извлечение полного текста статьи: {post.link}")
+                full_article_text = await extract_article_content(post.link)
+                if full_article_text:
+                    # Replace content with full article text
+                    post.content = full_article_text
+                    logger.info(f"Успешно извлечен полный текст ({len(full_article_text)} символов)")
+                else:
+                    logger.warning("Не удалось извлечь полный текст, используем RSS контент")
+            except Exception as e:
+                logger.error(f"Ошибка извлечения статьи: {e}", exc_info=True)
+        
         text_for_hash = post.content if post.content else post.summary
         content_hash = hashlib.md5(
             f"{post.title}{post.link}{text_for_hash}".encode()
         ).hexdigest()
         
-        message = self._format_post_message(post)
+        message = await self._format_post_message(post)
         
         for chat_telegram_id in chat_telegram_ids:
             if not self._can_send_message(chat_telegram_id):
@@ -197,7 +235,7 @@ class NewRSSService:
             except Exception as e:
                 logger.error(f"Error sending to chat {chat_telegram_id}: {e}")
     
-    def _format_post_message(self, post: RSSPost) -> str:
+    async def _format_post_message(self, post: RSSPost) -> str:
         def clean_html(text: str) -> str:
             if not text:
                 return ""
@@ -217,6 +255,20 @@ class NewRSSService:
         
         if text_to_use:
             clean_text = clean_html(text_to_use)
+            
+            # Рерайт текста через Gemini, если включено
+            if self.gemini_enabled and self.gemini_api_key:
+                try:
+                    logger.debug(f"Рерайт текста через Gemini: {len(clean_text)} символов")
+                    clean_text = await rewrite_with_gemini(
+                        text=clean_text,
+                        api_key=self.gemini_api_key
+                    )
+                    logger.info("Текст успешно рерайчен через Gemini")
+                except Exception as e:
+                    logger.error(f"Ошибка рерайта через Gemini: {e}")
+                    # Продолжаем с оригинальным текстом
+            
             # Limit to 4080 characters as requested
             max_text_length = 4080
             # Reserve space for title, link, and timestamp (approx 150 chars)

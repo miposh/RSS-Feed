@@ -91,16 +91,8 @@ class RSSParser:
         link = getattr(entry, 'link', '')
         summary = getattr(entry, 'summary', getattr(entry, 'description', ''))
         
-        content = ''
-        if hasattr(entry, 'content') and entry.content:
-            try:
-                content = entry.content[0].get('value', '')
-            except (IndexError, AttributeError, TypeError):
-                logger.warning("Failed to extract content from entry")
-        
-        # If no content, try content_encoded (some RSS feeds use this)
-        if not content and hasattr(entry, 'content_encoded'):
-            content = getattr(entry, 'content_encoded', '')
+        # Извлекаем полный текст из различных возможных тегов
+        content = RSSParser._extract_full_text(entry)
         
         published_time = RSSParser._parse_published_time(entry)
         
@@ -109,8 +101,53 @@ class RSSParser:
             title=title,
             link=link,
             summary=summary,
+            content=content,
             published_time=published_time
         )
+    
+    @staticmethod
+    def _extract_full_text(entry) -> str:
+        """
+        Извлекает полный текст статьи из различных возможных тегов.
+        Проверяет в порядке приоритета:
+        1. yandex:full-text (используется 360.ru и другими)
+        2. content:encoded (распространенный в RSS)
+        3. content (стандартный Atom)
+        4. Возвращает пустую строку, если ничего не найдено
+        """
+        # 1. Проверяем yandex:full-text (feedparser заменяет : на _)
+        if hasattr(entry, 'yandex_full-text'):
+            text = getattr(entry, 'yandex_full-text', '')
+            if text:
+                logger.debug("Extracted full text from yandex:full-text")
+                return text
+        
+        # Альтернативный вариант написания
+        if hasattr(entry, 'yandex_fulltext'):
+            text = getattr(entry, 'yandex_fulltext', '')
+            if text:
+                logger.debug("Extracted full text from yandex:fulltext")
+                return text
+        
+        # 2. Проверяем content:encoded
+        if hasattr(entry, 'content_encoded'):
+            text = getattr(entry, 'content_encoded', '')
+            if text:
+                logger.debug("Extracted full text from content:encoded")
+                return text
+        
+        # 3. Проверяем стандартный content (обычно массив)
+        if hasattr(entry, 'content') and entry.content:
+            try:
+                text = entry.content[0].get('value', '')
+                if text:
+                    logger.debug("Extracted full text from content")
+                    return text
+            except (IndexError, AttributeError, TypeError, KeyError):
+                pass
+        
+        # 4. Возвращаем пустую строку, если полный текст не найден
+        return ''
     
     @staticmethod
     def _parse_published_time(entry) -> Optional[datetime]:

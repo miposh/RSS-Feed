@@ -5,3 +5,7 @@ feedparser
 python-dotenv
 requests
 aiohttp
+google-genai
+scraperapi-sdk
+newspaper4k
+Brotli

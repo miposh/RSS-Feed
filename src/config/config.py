@@ -30,6 +30,8 @@ class Config:
             "RSS_CHECK_INTERVAL": "300",  # 5 minutes in seconds
             "SENT_POSTS_RETENTION_DAYS": "30",  # Keep sent posts for 90 days
             "CLEANUP_INTERVAL": "86400",  # Run cleanup once a day (in seconds)
+            "GEMINI_ENABLED": "false",  # Enable Gemini AI rewriting
+            "GEMINI_API_KEY": "",  # Google Gemini API key
         }
 
     def _validate_required_vars(self) -> None:
