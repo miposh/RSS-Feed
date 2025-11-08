@@ -1,6 +1,6 @@
 import logging
 from aiogram import Bot, Router
-from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_ADMIN, MEMBER
+from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_ADMIN, IS_MEMBER, MEMBER
 from aiogram.types import ChatMemberUpdated
 
 from app.infrastructure.database.db import DB
@@ -16,7 +16,6 @@ chat_member_router = Router()
 async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> None:
     chat = event.chat
     
-    # Debug logging
     logger.info(f"my_chat_member event: chat_type={chat.type}, chat_id={chat.id}, from_user={event.from_user.id}")
     
     if chat.type not in ["group", "supergroup"]:
@@ -24,7 +23,6 @@ async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> N
     
     new_status = event.new_chat_member
     
-    # Check if bot has admin rights
     if new_status.status in ["administrator", "creator"]:
         logger.info(f"Bot added as admin to chat: {chat.id} ({chat.title})")
         
@@ -73,3 +71,38 @@ async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> N
             )
         except Exception as e:
             logger.error(f"Failed to send warning message to chat {chat.id}: {e}")
+
+
+@chat_member_router.my_chat_member(
+    ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER)
+)
+async def on_bot_removed_from_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> None:
+    chat = event.chat
+    
+    logger.info(f"Bot removed from chat: chat_type={chat.type}, chat_id={chat.id}, from_user={event.from_user.id}")
+    
+    if chat.type not in ["group", "supergroup"]:
+        return
+    
+    logger.info(f"Bot removed from group: {chat.id} ({chat.title})")
+    
+    try:
+        await db.channels.delete(channel_id=chat.id)
+        logger.info(f"Successfully deleted group from database: {chat.title} (ID: {chat.id})")
+        
+        removal_message = (
+            f"❌ Группа <b>{chat.title}</b> была удалена из бота.\n\n"
+        )
+        
+        try:
+            await bot.send_message(
+                chat_id=event.from_user.id,
+                text=removal_message,
+                parse_mode="HTML"
+            )
+            logger.info(f"Successfully sent removal notification to user: {event.from_user.id}")
+        except Exception as e:
+            logger.error(f"Failed to send removal notification to user {event.from_user.id}: {e}")
+            
+    except Exception as e:
+        logger.error(f"Failed to delete channel {chat.id} from database: {e}")
