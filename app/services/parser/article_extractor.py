@@ -8,7 +8,7 @@ from typing import Optional
 
 from scraperapi_sdk import ScraperAPIClient
 from newspaper import Article, ArticleException
-from config.config import config
+from config.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +18,9 @@ class ArticleExtractor:
     
     def __init__(self):
         """Initialize the article extractor with ScraperAPI client."""
-        self.scraper_api_key = config.get("SCRAPER_API_KEY")
-        self.scraper_enabled = config.get("SCRAPER_ENABLED", "false").lower() == "true"
+        config = get_config()
+        self.scraper_api_key = config.scraper.api_key
+        self.scraper_enabled = config.scraper.enabled
         
         if self.scraper_enabled and not self.scraper_api_key:
             logger.warning("ScraperAPI включен, но API ключ не найден")

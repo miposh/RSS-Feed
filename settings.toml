@@ -1,0 +1,26 @@
+# Основные настройки приложения
+
+[default]
+rss_check_interval = 300
+cleanup_interval = 86400
+sent_posts_retention_days = 30
+gemini_enabled = false
+scraper_enabled = false
+
+[default.logs]
+level_name = "INFO"
+format = "%(asctime)s [%(levelname)s] %(message)s"
+
+[default.bot]
+parse_mode = "HTML"
+
+[default.postgres]
+name = "rss"
+host = "95.181.167.217"
+port = 5405
+user = "postgres"
+
+[default.redis]
+host = "localhost"
+port = 6379
+database = 0

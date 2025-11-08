@@ -12,15 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseSchema:
-    SQL_DIR = Path(__file__).parent.parent.parent / "migrations"
+    SQL_DIR = Path(__file__).parent.parent.parent.parent / "migrations"
     
-    # List of migration files in order
-    SQL_FILES = [
-        "001_create_users_table.sql",
-        "002_create_channels_table.sql",
-        "003_create_rss_feeds_table.sql",
-        "004_create_feed_subscriptions_table.sql",
-        "005_create_rss_posts_table.sql",
+    # List of migration files to apply
+    # Add new migrations here manually before running the bot
+    MIGRATIONS_TO_APPLY = [
+        # "001_create_users_table.sql",
+        # "002_create_channels_table.sql",
+        # "003_create_rss_feeds_table.sql",
+        # "004_create_feed_subscriptions_table.sql",
+        # "005_create_rss_posts_table.sql",
     ]
     
     def __init__(self, connection: BaseConnection):
@@ -29,7 +30,7 @@ class DatabaseSchema:
     async def create_tables(self) -> None:
         logger.info("Starting database schema initialization...")
         
-        for sql_file in self.SQL_FILES:
+        for sql_file in self.MIGRATIONS_TO_APPLY:
             file_path = self.SQL_DIR / sql_file
             
             if not file_path.exists():
@@ -49,14 +50,19 @@ class DatabaseSchema:
         logger.info("Database schema initialization completed successfully!")
     
     async def apply_migrations(self) -> None:
-        logger.info("Applying database migrations...")
+        """Apply migrations listed in MIGRATIONS_TO_APPLY."""
+        if not self.MIGRATIONS_TO_APPLY:
+            logger.info("No migrations to apply")
+            return
         
-        for sql_file in self.SQL_FILES:
+        logger.info(f"Applying {len(self.MIGRATIONS_TO_APPLY)} migration(s)...")
+        
+        for sql_file in self.MIGRATIONS_TO_APPLY:
             file_path = self.SQL_DIR / sql_file
             
             if not file_path.exists():
-                logger.warning(f"SQL file not found: {file_path}")
-                continue
+                logger.error(f"Migration file not found: {file_path}")
+                raise FileNotFoundError(f"Migration file not found: {file_path}")
             
             try:
                 sql_content = file_path.read_text(encoding="utf-8")
@@ -65,9 +71,10 @@ class DatabaseSchema:
                 logger.info(f"✓ Applied: {sql_file}")
                 
             except Exception as e:
-                logger.warning(f"⚠ Migration {sql_file} skipped or already applied: {e}")
+                logger.error(f"✗ Failed to apply {sql_file}: {e}")
+                raise
         
-        logger.info("Database migrations completed!")
+        logger.info("All migrations applied successfully!")
     
     async def verify_tables(self) -> bool:
         required_tables = [

@@ -10,12 +10,12 @@ from aiogram_dialog import setup_dialogs
 
 from config.config import get_config
 from app.infrastructure.database.connection.connect_to_pg import get_pg_pool
-from app.infrastructure.database.schema import DatabaseSchema
-from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
 from app.bot.middlewares.chat_type_middleware import ChatTypeMiddleware
 from app.bot.middlewares.error_middleware import ErrorHandlingMiddleware
 from app.bot.middlewares.user_tracking import UserTrackingMiddleware
 from app.bot.middlewares.database import DataBaseMiddleware
+from app.bot.dialogs.flows import dialogs
+from app.bot.handlers import routers
 from app.services.new_rss_service import NewRSSService
 
 logging.basicConfig(
@@ -47,10 +47,8 @@ async def on_startup(bot: Bot, db_pool) -> NewRSSService:
     logger.info("Bot is starting...")
     # await set_bot_commands(bot)
     
-    async with db_pool.connection() as raw_connection:
-        connection = PsycopgConnection(raw_connection)
-        schema = DatabaseSchema(connection)
-        await schema.create_tables()
+    # Migrations are applied separately via apply_migrations.py script
+    # This keeps bot startup fast and migrations explicit
     
     rss_service = NewRSSService(bot, db_pool)
     await rss_service.start()
@@ -80,7 +78,13 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     
-    db_pool = await get_pg_pool(config.database)
+    db_pool = await get_pg_pool(
+        db_name=config.postgres.name,
+        host=config.postgres.host,
+        port=config.postgres.port,
+        user=config.postgres.user,
+        password=config.postgres.password,
+    )
     
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
@@ -90,6 +94,12 @@ async def main() -> None:
     dp.message.middleware(ChatTypeMiddleware())
     dp.message.middleware(UserTrackingMiddleware())
     dp.callback_query.middleware(UserTrackingMiddleware())
+    
+    # Register handlers
+    dp.include_routers(*routers)
+    
+    # Register dialogs
+    dp.include_routers(*dialogs)
     
     setup_dialogs(dp)
     

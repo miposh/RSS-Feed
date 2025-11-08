@@ -11,17 +11,18 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.infrastructure.database.db import DB
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
-from app.database.models.rss_post import RSSPost
+from app.infrastructure.database.models.rss_post import RSSPostModel as RSSPost
 from config.config import get_config
-from fetcher.http_client import get_http_client, close_http_client
-from parser.rss_parser import parse_rss_feed
-from parser.article_extractor import extract_article_content
-from services.gemini_service import rewrite_with_gemini
+from app.services.fetcher.http_client import get_http_client, close_http_client
+from app.services.parser.rss_parser import parse_rss_feed
+from app.services.parser.article_extractor import extract_article_content
+from app.services.gemini_service import rewrite_with_gemini
 
 logger = logging.getLogger(__name__)
 
-RSS_CHECK_INTERVAL = get_config().get("RSS_CHECK_INTERVAL", 300)
-CLEANUP_INTERVAL = int(get_config().get("CLEANUP_INTERVAL", 86400))
+_config = get_config()
+RSS_CHECK_INTERVAL = _config.rss.check_interval
+CLEANUP_INTERVAL = _config.rss.cleanup_interval
 
 
 class NewRSSService:
@@ -40,14 +41,15 @@ class NewRSSService:
         self.max_messages_per_minute_per_group = 20
         
         # Gemini AI settings
-        self.gemini_enabled = get_config().get("GEMINI_ENABLED", "false").lower() == "true"
-        self.gemini_api_key = get_config().get("GEMINI_API_KEY")
+        config = get_config()
+        self.gemini_enabled = config.gemini.enabled
+        self.gemini_api_key = config.gemini.api_key
         if self.gemini_enabled and not self.gemini_api_key:
             logger.warning("Gemini включен, но API ключ не найден")
             self.gemini_enabled = False
         
         # ScraperAPI settings for full article extraction
-        self.scraper_enabled = get_config().get("SCRAPER_ENABLED", "false").lower() == "true"
+        self.scraper_enabled = config.scraper.enabled
     
     async def start(self) -> None:
         if self.running:
