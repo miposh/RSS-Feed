@@ -18,7 +18,7 @@ parse_mode = "HTML"
 name = "rss"
 host = "95.181.167.217"
 port = 5405
-user = "postgres"
+user = "polyana"
 
 [default.redis]
 host = "localhost"

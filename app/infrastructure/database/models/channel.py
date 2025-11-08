@@ -9,6 +9,7 @@ class ChannelModel(BaseModel):
     channel_id: int = Field(..., description="Telegram chat/channel ID")
     username: Optional[str] = Field(None, description="Telegram channel username (without @)")
     title: str = Field(..., description="Channel/group title")
+    parsing_is_enabled: bool = Field(False, description="Whether RSS parsing is enabled for this channel")
     created_at: datetime = Field(..., description="Timestamp of channel creation")
 
     class Config:

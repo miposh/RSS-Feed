@@ -7,9 +7,11 @@ CREATE TABLE IF NOT EXISTS channels (
     channel_id BIGINT NOT NULL UNIQUE,
     username VARCHAR(32),
     title TEXT NOT NULL,
+    parsing_is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_channels_channel_id ON channels(channel_id);
 CREATE INDEX IF NOT EXISTS idx_channels_username ON channels(username);
+CREATE INDEX IF NOT EXISTS idx_channels_parsing_is_enabled ON channels(parsing_is_enabled);

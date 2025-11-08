@@ -88,13 +88,13 @@ class FeedSubscriptionsTable(BaseTable):
         return subscriptions
 
     async def get_channels_for_feed(self, *, feed_id: int) -> list[int]:
-        """Get all channel IDs subscribed to a feed."""
+        """Get all channel IDs subscribed to a feed (only enabled channels)."""
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
                 SELECT c.channel_id
                 FROM feed_subscriptions fs
                 JOIN channels c ON fs.channel_id = c.id
-                WHERE fs.feed_id = %s
+                WHERE fs.feed_id = %s AND c.parsing_is_enabled = TRUE
             """,
             params=(feed_id,),
         )

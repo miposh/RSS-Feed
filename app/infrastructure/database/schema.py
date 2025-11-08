@@ -12,16 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseSchema:
-    SQL_DIR = Path(__file__).parent.parent.parent.parent / "migrations"
+    SQL_DIR = Path(__file__).parent.parent.parent / "migrations"
     
     # List of migration files to apply
     # Add new migrations here manually before running the bot
     MIGRATIONS_TO_APPLY = [
-        # "001_create_users_table.sql",
-        # "002_create_channels_table.sql",
-        # "003_create_rss_feeds_table.sql",
-        # "004_create_feed_subscriptions_table.sql",
-        # "005_create_rss_posts_table.sql",
+        "001_create_users_table.sql",
+        "002_create_channels_table.sql",
+        "003_create_rss_feeds_table.sql",
+        "004_create_feed_subscriptions_table.sql",
+        "005_create_rss_posts_table.sql",
     ]
     
     def __init__(self, connection: BaseConnection):

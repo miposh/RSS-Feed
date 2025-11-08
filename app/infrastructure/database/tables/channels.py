@@ -57,7 +57,7 @@ class ChannelsTable(BaseTable):
         """Get channel by channel_id."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
-                SELECT id, channel_id, username, title, created_at
+                SELECT id, channel_id, username, title, parsing_is_enabled, created_at
                 FROM channels
                 WHERE channel_id = %s
             """,
@@ -71,7 +71,7 @@ class ChannelsTable(BaseTable):
         """Get channel by internal id."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
-                SELECT id, channel_id, username, title, created_at
+                SELECT id, channel_id, username, title, parsing_is_enabled, created_at
                 FROM channels
                 WHERE id = %s
             """,
@@ -108,7 +108,7 @@ class ChannelsTable(BaseTable):
         """Get all channels."""
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
-                SELECT id, channel_id, username, title, created_at
+                SELECT id, channel_id, username, title, parsing_is_enabled, created_at
                 FROM channels
                 ORDER BY created_at DESC
             """,
@@ -116,3 +116,48 @@ class ChannelsTable(BaseTable):
         channels = data.to_models(model=ChannelModel)
         self._log(ChannelsTableAction.GET_ALL_CHANNELS, count=len(data) if data else 0)
         return channels
+
+    async def toggle_parsing(self, *, channel_id: int) -> ChannelModel | None:
+        """Toggle RSS parsing for a channel."""
+        data: SingleQueryResult = await self.connection.update_and_fetchone(
+            sql="""
+                UPDATE channels
+                SET parsing_is_enabled = NOT parsing_is_enabled
+                WHERE channel_id = %s
+                RETURNING *;
+            """,
+            params=(channel_id,),
+        )
+        channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, parsing_is_enabled=channel_model.parsing_is_enabled)
+        return channel_model
+
+    async def enable_parsing(self, *, channel_id: int) -> ChannelModel | None:
+        """Enable RSS parsing for a channel."""
+        data: SingleQueryResult = await self.connection.update_and_fetchone(
+            sql="""
+                UPDATE channels
+                SET parsing_is_enabled = TRUE
+                WHERE channel_id = %s
+                RETURNING *;
+            """,
+            params=(channel_id,),
+        )
+        channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, parsing_is_enabled=True)
+        return channel_model
+
+    async def disable_parsing(self, *, channel_id: int) -> ChannelModel | None:
+        """Disable RSS parsing for a channel."""
+        data: SingleQueryResult = await self.connection.update_and_fetchone(
+            sql="""
+                UPDATE channels
+                SET parsing_is_enabled = FALSE
+                WHERE channel_id = %s
+                RETURNING *;
+            """,
+            params=(channel_id,),
+        )
+        channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, parsing_is_enabled=False)
+        return channel_model

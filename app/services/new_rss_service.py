@@ -11,10 +11,10 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.infrastructure.database.db import DB
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
-from app.infrastructure.database.models.rss_post import RSSPostModel as RSSPost
 from config.config import get_config
 from app.services.fetcher.http_client import get_http_client, close_http_client
 from app.services.parser.rss_parser import parse_rss_feed
+from app.services.parser.models import RSSPost
 from app.services.parser.article_extractor import extract_article_content
 from app.services.gemini_service import rewrite_with_gemini
 
