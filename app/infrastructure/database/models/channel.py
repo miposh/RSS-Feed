@@ -10,6 +10,9 @@ class ChannelModel(BaseModel):
     username: Optional[str] = Field(None, description="Telegram channel username (without @)")
     title: str = Field(..., description="Channel/group title")
     parsing_is_enabled: bool = Field(False, description="Whether RSS parsing is enabled for this channel")
+    interval_time: int = Field(300, description="RSS feed check interval in seconds (default: 300 = 5 minutes)")
+    scraper_is_enabled: bool = Field(True, description="Whether to use scraper API for full article extraction")
+    scraper_api_key: Optional[str] = Field(None, description="API key for scraper service (optional, can use global key)")
     created_at: datetime = Field(..., description="Timestamp of channel creation")
 
     class Config:

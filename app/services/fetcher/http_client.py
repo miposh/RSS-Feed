@@ -6,8 +6,7 @@ from urllib.parse import urlparse
 from typing import Optional, Dict, Tuple
 from contextlib import asynccontextmanager
 
-import aiohttp
-from aiohttp import ClientTimeout, TCPConnector, ClientSession
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +16,17 @@ class HTTPClient:
     _lock = asyncio.Lock()
     
     def __init__(self):
-        self._session: Optional[ClientSession] = None
+        self._session: Optional[httpx.AsyncClient] = None
         self._domain_semaphores: Dict[str, asyncio.Semaphore] = {}
         self._etag_cache: Dict[str, str] = {}
         self._last_modified_cache: Dict[str, str] = {}
         
         self.max_connections = 100
         self.max_connections_per_domain = 10
-        self.timeout = ClientTimeout(
-            total=30,
-            connect=5,
-            sock_read=10
+        self.timeout = httpx.Timeout(
+            timeout=30.0,
+            connect=5.0,
+            read=10.0
         )
         self.max_retries = 3
         self.base_backoff = 1.0
@@ -50,31 +49,29 @@ class HTTPClient:
         return cls._instance
     
     async def _init_session(self) -> None:
-        if self._session is None or self._session.closed:
-            connector = TCPConnector(
-                limit=self.max_connections,
-                limit_per_host=self.max_connections_per_domain,
-                ttl_dns_cache=300,
-                enable_cleanup_closed=True,
+        if self._session is None or self._session.is_closed:
+            limits = httpx.Limits(
+                max_connections=self.max_connections,
+                max_keepalive_connections=self.max_connections_per_domain,
             )
             
-            self._session = ClientSession(
-                connector=connector,
+            self._session = httpx.AsyncClient(
+                limits=limits,
                 timeout=self.timeout,
                 headers=self.default_headers,
-                raise_for_status=False,
+                follow_redirects=True,
             )
             logger.info(
                 "HTTP client initialized",
                 extra={
                     "max_connections": self.max_connections,
-                    "timeout_total": self.timeout.total,
+                    "timeout_total": self.timeout.timeout,
                 }
             )
     
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session and not self._session.is_closed:
+            await self._session.aclose()
             logger.info("HTTP client closed")
     
     def _get_domain_semaphore(self, domain: str) -> asyncio.Semaphore:
@@ -127,53 +124,52 @@ class HTTPClient:
         for attempt in range(self.max_retries):
             try:
                 async with semaphore:
-                    async with self._session.get(
+                    response = await self._session.get(
                         url,
                         headers=headers,
-                        ssl=verify_ssl,
-                        allow_redirects=True,
-                    ) as response:
-                        status = response.status
-                        
-                        if status == 304:
-                            logger.debug(
-                                f"Feed not modified (304): {url}",
-                                extra={"url": url, "status": 304}
-                            )
-                            return None, 304, None
-                        
-                        if status == 403:
-                            logger.warning(
-                                f"Access forbidden (403): {url}",
-                                extra={"url": url, "status": 403}
-                            )
-                            return None, 403, "Site blocks automated requests"
-                        
-                        if status != 200:
-                            logger.warning(
-                                f"HTTP error {status}: {url}",
-                                extra={"url": url, "status": status}
-                            )
-                            return None, status, f"HTTP {status}"
-                        
-                        content = await response.read()
-                        
-                        if use_cache:
-                            etag = response.headers.get('ETag')
-                            last_modified = response.headers.get('Last-Modified')
-                            self._update_cache(url, etag, last_modified)
-                        
-                        logger.info(
-                            f"Fetched successfully: {url}",
-                            extra={
-                                "url": url,
-                                "status": status,
-                                "size_bytes": len(content),
-                                "attempt": attempt + 1,
-                            }
+                        verify=verify_ssl,
+                    )
+                    status = response.status_code
+                    
+                    if status == 304:
+                        logger.debug(
+                            f"Feed not modified (304): {url}",
+                            extra={"url": url, "status": 304}
                         )
-                        
-                        return content, 200, None
+                        return None, 304, None
+                    
+                    if status == 403:
+                        logger.warning(
+                            f"Access forbidden (403): {url}",
+                            extra={"url": url, "status": 403}
+                        )
+                        return None, 403, "Site blocks automated requests"
+                    
+                    if status != 200:
+                        logger.warning(
+                            f"HTTP error {status}: {url}",
+                            extra={"url": url, "status": status}
+                        )
+                        return None, status, f"HTTP {status}"
+                    
+                    content = response.content
+                    
+                    if use_cache:
+                        etag = response.headers.get('ETag')
+                        last_modified = response.headers.get('Last-Modified')
+                        self._update_cache(url, etag, last_modified)
+                    
+                    logger.info(
+                        f"Fetched successfully: {url}",
+                        extra={
+                            "url": url,
+                            "status": status,
+                            "size_bytes": len(content),
+                            "attempt": attempt + 1,
+                        }
+                    )
+                    
+                    return content, 200, None
             
             except asyncio.TimeoutError:
                 if attempt == self.max_retries - 1:
@@ -190,7 +186,7 @@ class HTTPClient:
                 )
                 await asyncio.sleep(backoff)
             
-            except aiohttp.ClientError as e:
+            except (httpx.HTTPError, httpx.TimeoutException) as e:
                 if attempt == self.max_retries - 1:
                     logger.error(
                         f"Client error after {self.max_retries} attempts: {url}",

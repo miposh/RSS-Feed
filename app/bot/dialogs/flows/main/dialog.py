@@ -6,6 +6,7 @@ from aiogram_dialog.widgets.text import Const, Format
 
 
 from app.bot.dialogs.flows.main.getters import (
+    get_channel_settings_data,
     get_group_menu_data,
     get_remove_source_data,
     get_rss_parser_data,
@@ -14,13 +15,22 @@ from app.bot.dialogs.flows.main.getters import (
 from app.bot.dialogs.flows.main.handlers import (
     on_add_group_clicked,
     on_add_source,
+    on_api_key_input,
+    on_back_to_settings,
+    on_custom_interval_clicked,
     on_delete_group,
     on_group_selected,
+    on_interval_input,
+    on_interval_preset_selected,
     on_list_sources,
     on_remove_source,
+    on_set_api_key_clicked,
+    on_set_interval_clicked,
+    on_settings_clicked,
     on_source_selected,
     on_source_url_input,
     on_toggle_group,
+    on_toggle_scraper,
 )
 from app.bot.dialogs.flows.main.states import MainSG
 
@@ -98,6 +108,11 @@ rss_parser_dialog = Dialog(
             width=2,
         ),
         Button(
+            text=Const("⚙️ Настройки"),
+            id="settings_btn",
+            on_click=on_settings_clicked,
+        ),
+        Button(
             text=Const("🗑️ Удалить группу"),
             id="delete_group_btn",
             on_click=on_delete_group,
@@ -149,6 +164,112 @@ rss_parser_dialog = Dialog(
         Back(Const("← Назад")),
         getter=get_remove_source_data,
         state=MainSG.remove_source,
+        parse_mode=ParseMode.HTML,
+    ),
+    Window(
+        Format(
+            "<b>⚙️ Настройки группы</b>\n\n"
+            "<b>⏱ Интервал проверки:</b> {interval_time} сек ({interval_minutes} мин)\n"
+            "<b>🔧 Скрапер:</b> {scraper_status}\n"
+            "<b>🔑 API ключ:</b> {api_key_status}\n\n"
+            "Выберите действие:"
+        ),
+        Button(
+            text=Format("{scraper_toggle_text}"),
+            id="toggle_scraper_btn",
+            on_click=on_toggle_scraper,
+        ),
+        Button(
+            text=Const("⏱ Изменить интервал"),
+            id="set_interval_btn",
+            on_click=on_set_interval_clicked,
+        ),
+        Button(
+            text=Const("🔑 Установить API ключ"),
+            id="set_api_key_btn",
+            on_click=on_set_api_key_clicked,
+        ),
+        Back(Const("← Назад")),
+        getter=get_channel_settings_data,
+        state=MainSG.channel_settings,
+        parse_mode=ParseMode.HTML,
+    ),
+    Window(
+        Format(
+            "<b>⏱ Интервал проверки RSS</b>\n\n"
+            "<b>Текущий интервал:</b> {interval_time} секунд ({interval_minutes} минут)\n\n"
+            "Выберите интервал проверки:"
+        ),
+        Group(
+            Select(
+                Format("{item[0]}"),
+                id="interval_preset_select",
+                item_id_getter=lambda x: x[1],
+                items=[
+                    ("⏱ 5 минут", "300"),
+                    ("⏱ 10 минут", "600"),
+                    ("⏱ 15 минут", "900"),
+                    ("⏱ 20 минут", "1200"),
+                    ("⏱ 30 минут", "1800"),
+                    ("⏱ 45 минут", "2700"),
+                    ("⏱ 1 час", "3600"),
+                ],
+                on_click=on_interval_preset_selected,
+            ),
+            width=3,
+        ),
+        Button(
+            text=Const("✏️ Своё значение"),
+            id="custom_interval_btn",
+            on_click=on_custom_interval_clicked,
+        ),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_settings_btn",
+            on_click=on_back_to_settings,
+        ),
+        getter=get_channel_settings_data,
+        state=MainSG.set_interval,
+        parse_mode=ParseMode.HTML,
+    ),
+    Window(
+        Format(
+            "<b>⏱ Свой интервал проверки RSS</b>\n"
+            "<b>Текущий интервал:</b> {interval_time} секунд ({interval_minutes} минут)\n"
+            "Введите новый интервал в секундах (минимум 60, максимум 86400):\n\n"
+            "Примеры:\n"
+            "• 60 = 1 минута\n"
+            "• 300 = 5 минут\n"
+            "• 600 = 10 минут\n"
+            "• 3600 = 1 час"
+        ),
+        MessageInput(
+            func=on_interval_input,
+        ),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_interval_btn",
+            on_click=on_set_interval_clicked,
+        ),
+        getter=get_channel_settings_data,
+        state=MainSG.set_interval_custom,
+        parse_mode=ParseMode.HTML,
+    ),
+    Window(
+        Format(
+            "<b>🔑 API ключ ScraperAPI</b>\n"
+            "ℹ️ API ключ используется для извлечения полного текста статей."
+        ),
+        MessageInput(
+            func=on_api_key_input,
+        ),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_settings_btn2",
+            on_click=on_back_to_settings,
+        ),
+        getter=get_channel_settings_data,
+        state=MainSG.set_scraper_api_key,
         parse_mode=ParseMode.HTML,
     ),
 )

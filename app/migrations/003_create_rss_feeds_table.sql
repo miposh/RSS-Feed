@@ -29,9 +29,3 @@ CREATE TABLE IF NOT EXISTS rss_feeds (
 CREATE INDEX IF NOT EXISTS idx_rss_feeds_owner_user_id ON rss_feeds(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_rss_feeds_enabled ON rss_feeds(enabled);
 CREATE INDEX IF NOT EXISTS idx_rss_feeds_scheduler ON rss_feeds(enabled, backoff_until, last_fetched_at);
-
--- Create trigger for updated_at
-CREATE TRIGGER update_rss_feeds_updated_at
-    BEFORE UPDATE ON rss_feeds
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();

@@ -8,3 +8,7 @@ class MainSG(StatesGroup):
     sources_list = State()
     add_source = State()
     remove_source = State()
+    channel_settings = State()
+    set_interval = State()
+    set_interval_custom = State()
+    set_scraper_api_key = State()

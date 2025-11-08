@@ -3,7 +3,7 @@ aiogram-dialog
 alembic
 dynaconf
 feedparser
-aiohttp
+httpx
 google-genai
 scraperapi-sdk
 newspaper4k

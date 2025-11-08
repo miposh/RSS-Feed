@@ -131,3 +131,54 @@ async def get_remove_source_data(dialog_manager: DialogManager, db: DB, **kwargs
         "group_name": channel.title,
         "source_buttons": source_buttons,
     }
+
+
+async def get_channel_settings_data(dialog_manager: DialogManager, db: DB, **kwargs) -> dict:
+    """Get data for channel settings window."""
+    selected_channel_id = dialog_manager.dialog_data.get("selected_channel_id")
+    
+    if not selected_channel_id:
+        return {
+            "group_name": "Неизвестная группа",
+            "interval_time": 300,
+            "interval_minutes": 5,
+            "scraper_is_enabled": False,
+            "scraper_status": "❌ Выключен",
+            "scraper_toggle_text": "⭕️ Включить скрапер",
+            "api_key_status": "Не установлен",
+        }
+    
+    # Get channel info from database
+    channel = await db.channels.get_channel(channel_id=int(selected_channel_id))
+    
+    if not channel:
+        return {
+            "group_name": "Группа не найдена",
+            "interval_time": 300,
+            "interval_minutes": 5,
+            "scraper_is_enabled": False,
+            "scraper_status": "❌ Выключен",
+            "scraper_toggle_text": "⭕️ Включить скрапер",
+            "api_key_status": "Не установлен",
+        }
+    
+    interval_minutes = channel.interval_time // 60
+    scraper_toggle_text = "🔘 Выключить скрапер" if channel.scraper_is_enabled else "⭕️ Включить скрапер"
+    scraper_status = "✅ Включен" if channel.scraper_is_enabled else "❌ Выключен"
+    
+    if channel.scraper_api_key:
+        # Show masked API key
+        masked_key = channel.scraper_api_key[:8] + "..." + channel.scraper_api_key[-4:] if len(channel.scraper_api_key) > 12 else "***"
+        api_key_status = f"{masked_key}"
+    else:
+        api_key_status = "Не установлен"
+    
+    return {
+        "group_name": channel.title,
+        "interval_time": channel.interval_time,
+        "interval_minutes": interval_minutes,
+        "scraper_is_enabled": channel.scraper_is_enabled,
+        "scraper_status": scraper_status,
+        "scraper_toggle_text": scraper_toggle_text,
+        "api_key_status": api_key_status,
+    }

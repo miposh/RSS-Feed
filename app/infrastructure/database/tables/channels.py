@@ -57,7 +57,8 @@ class ChannelsTable(BaseTable):
         """Get channel by channel_id."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
-                SELECT id, channel_id, username, title, parsing_is_enabled, created_at
+                SELECT id, channel_id, username, title, parsing_is_enabled, 
+                       interval_time, scraper_is_enabled, scraper_api_key, created_at
                 FROM channels
                 WHERE channel_id = %s
             """,
@@ -71,7 +72,8 @@ class ChannelsTable(BaseTable):
         """Get channel by internal id."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
-                SELECT id, channel_id, username, title, parsing_is_enabled, created_at
+                SELECT id, channel_id, username, title, parsing_is_enabled, 
+                       interval_time, scraper_is_enabled, scraper_api_key, created_at
                 FROM channels
                 WHERE id = %s
             """,
@@ -108,7 +110,8 @@ class ChannelsTable(BaseTable):
         """Get all channels."""
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
-                SELECT id, channel_id, username, title, parsing_is_enabled, created_at
+                SELECT id, channel_id, username, title, parsing_is_enabled, 
+                       interval_time, scraper_is_enabled, scraper_api_key, created_at
                 FROM channels
                 ORDER BY created_at DESC
             """,
@@ -160,4 +163,49 @@ class ChannelsTable(BaseTable):
         )
         channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
         self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, parsing_is_enabled=False)
+        return channel_model
+
+    async def update_interval_time(self, *, channel_id: int, interval_time: int) -> ChannelModel | None:
+        """Update RSS check interval for a channel."""
+        data: SingleQueryResult = await self.connection.update_and_fetchone(
+            sql="""
+                UPDATE channels
+                SET interval_time = %s
+                WHERE channel_id = %s
+                RETURNING *;
+            """,
+            params=(interval_time, channel_id),
+        )
+        channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, interval_time=interval_time)
+        return channel_model
+
+    async def toggle_scraper(self, *, channel_id: int) -> ChannelModel | None:
+        """Toggle scraper for a channel."""
+        data: SingleQueryResult = await self.connection.update_and_fetchone(
+            sql="""
+                UPDATE channels
+                SET scraper_is_enabled = NOT scraper_is_enabled
+                WHERE channel_id = %s
+                RETURNING *;
+            """,
+            params=(channel_id,),
+        )
+        channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, scraper_is_enabled=channel_model.scraper_is_enabled)
+        return channel_model
+
+    async def update_scraper_api_key(self, *, channel_id: int, api_key: Optional[str]) -> ChannelModel | None:
+        """Update scraper API key for a channel."""
+        data: SingleQueryResult = await self.connection.update_and_fetchone(
+            sql="""
+                UPDATE channels
+                SET scraper_api_key = %s
+                WHERE channel_id = %s
+                RETURNING *;
+            """,
+            params=(api_key, channel_id),
+        )
+        channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, scraper_api_key=api_key)
         return channel_model
