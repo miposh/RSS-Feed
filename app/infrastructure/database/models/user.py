@@ -5,8 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class UserModel(BaseModel):
-    """Pydantic model for User."""
-    
     id: int = Field(..., description="Internal auto-incrementing primary key")
     user_id: int = Field(..., description="Telegram user ID, unique per user")
     username: Optional[str] = Field(None, description="Telegram username (without @)")

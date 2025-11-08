@@ -1,82 +1,119 @@
 import logging
-from typing import List, Tuple
+from typing import Optional
 from aiogram.types import Chat
 
-from repositories.chat_repository import ChatRepository
-from repositories.feed_repository import FeedRepository
-from repositories.subscription_repository import SubscriptionRepository
-from config.config import config
+from app.infrastructure.database.db import DB
+from app.infrastructure.database.models.channel import ChannelModel
+from app.infrastructure.database.models.rss_feed import RSSFeedModel
 
 logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    def __init__(self):
-        self.chat_repo = ChatRepository(config.db_path)
-        self.feed_repo = FeedRepository(config.db_path)
-        self.sub_repo = SubscriptionRepository(config.db_path)
+    """Service for managing chats/channels and their feed subscriptions."""
+    
+    def __init__(self, db: DB):
+        self.db = db
     
     async def register_chat(self, chat: Chat) -> bool:
+        """Register or update a chat/channel in the database."""
         try:
-            result = await self.chat_repo.add_or_update_chat(
-                chat_id=chat.id,
-                title=chat.title,
-                username=chat.username,
-                chat_type=chat.type
+            result = await self.db.channels.add(
+                channel_id=chat.id,
+                title=chat.title or "Unknown",
+                username=chat.username
             )
             return result is not None
         except Exception as e:
             logger.error(f"Error registering chat {chat.id}: {e}", exc_info=True)
             return False
     
-    async def add_feed_to_chat(self, chat_telegram_id: int, feed_url: str) -> bool:
+    async def add_feed_to_chat(self, channel_id: int, feed_url: str) -> bool:
+        """Add a feed subscription to a channel."""
         try:
-            feed_id = await self.feed_repo.add_feed(feed_url)
-            if not feed_id:
+            # Get or create feed
+            feed = await self.db.rss_feeds.get_feed_by_url(url=feed_url)
+            if not feed:
+                feed = await self.db.rss_feeds.add(url=feed_url)
+            
+            if not feed:
+                logger.error(f"Failed to create feed {feed_url}")
                 return False
             
-            # Get chat internal id
-            chat_internal_id = await self.chat_repo.get_chat_id(chat_telegram_id)
-            if not chat_internal_id:
-                logger.error(f"Chat {chat_telegram_id} not found in database")
+            # Get channel internal id
+            channel = await self.db.channels.get_channel(channel_id=channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found in database")
                 return False
             
-            # Subscribe
-            return await self.sub_repo.subscribe(chat_internal_id, feed_id)
+            # Create subscription
+            subscription = await self.db.feed_subscriptions.add(
+                feed_id=feed.id,
+                channel_id=channel.id
+            )
+            return subscription is not None
         except Exception as e:
             logger.error(f"Error adding feed to chat: {e}", exc_info=True)
             return False
     
-    async def remove_feed_from_chat(self, chat_telegram_id: int, feed_url: str) -> bool:
+    async def remove_feed_from_chat(self, channel_id: int, feed_url: str) -> bool:
+        """Remove a feed subscription from a channel."""
         try:
-            feed = await self.feed_repo.get_feed_by_url(feed_url)
+            # Get feed
+            feed = await self.db.rss_feeds.get_feed_by_url(url=feed_url)
             if not feed:
+                logger.warning(f"Feed {feed_url} not found")
                 return False
             
-            feed_id = feed[0]
-            
-            chat_internal_id = await self.chat_repo.get_chat_id(chat_telegram_id)
-            if not chat_internal_id:
+            # Get channel
+            channel = await self.db.channels.get_channel(channel_id=channel_id)
+            if not channel:
+                logger.warning(f"Channel {channel_id} not found")
                 return False
             
-            return await self.sub_repo.unsubscribe(chat_internal_id, feed_id)
+            # Delete subscription
+            await self.db.feed_subscriptions.delete(
+                feed_id=feed.id,
+                channel_id=channel.id
+            )
+            return True
         except Exception as e:
             logger.error(f"Error removing feed from chat: {e}", exc_info=True)
             return False
     
-    async def get_chat_feeds(self, chat_telegram_id: int) -> List[Tuple]:
+    async def get_chat_feeds(self, channel_id: int) -> list[RSSFeedModel]:
+        """Get all feeds subscribed by a channel."""
         try:
-            chat_internal_id = await self.chat_repo.get_chat_id(chat_telegram_id)
-            if not chat_internal_id:
+            # Get channel
+            channel = await self.db.channels.get_channel(channel_id=channel_id)
+            if not channel:
+                logger.warning(f"Channel {channel_id} not found")
                 return []
             
-            return await self.feed_repo.get_feeds_for_chat(chat_internal_id)
+            # Get subscriptions
+            subscriptions = await self.db.feed_subscriptions.get_subscriptions_by_channel(
+                channel_id=channel.id
+            )
+            
+            if not subscriptions:
+                return []
+            
+            # Get feeds
+            feeds = []
+            for sub in subscriptions:
+                feed = await self.db.rss_feeds.get_feed(feed_id=sub.feed_id)
+                if feed:
+                    feeds.append(feed)
+            
+            return feeds
         except Exception as e:
             logger.error(f"Error getting chat feeds: {e}", exc_info=True)
             return []
     
-    async def get_all_active_subscriptions(self) -> List[Tuple]:
-        return await self.sub_repo.get_active_subscriptions()
-    
-    async def toggle_ai_for_chat(self, chat_telegram_id: int) -> bool:
-        return await self.chat_repo.toggle_ai(chat_telegram_id)
+    async def get_channel(self, channel_id: int) -> Optional[ChannelModel]:
+        """Get channel by Telegram channel_id."""
+        try:
+            return await self.db.channels.get_channel(channel_id=channel_id)
+        except Exception as e:
+            logger.error(f"Error getting channel {channel_id}: {e}", exc_info=True)
+            return None

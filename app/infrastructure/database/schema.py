@@ -12,9 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseSchema:
-    """Manages database schema and migrations."""
-    
-    # Path to SQL migrations directory
     SQL_DIR = Path(__file__).parent.parent.parent / "migrations"
     
     # List of migration files in order
@@ -27,20 +24,9 @@ class DatabaseSchema:
     ]
     
     def __init__(self, connection: BaseConnection):
-        """
-        Initialize schema manager.
-        
-        Args:
-            connection: Active database connection
-        """
         self.connection = connection
     
     async def create_tables(self) -> None:
-        """
-        Create all database tables by executing migration files.
-        
-        This method executes all SQL files in order.
-        """
         logger.info("Starting database schema initialization...")
         
         for sql_file in self.SQL_FILES:
@@ -63,12 +49,6 @@ class DatabaseSchema:
         logger.info("Database schema initialization completed successfully!")
     
     async def apply_migrations(self) -> None:
-        """
-        Apply database migrations.
-        
-        This method executes migration files. Uses CREATE IF NOT EXISTS
-        so it's safe to run multiple times.
-        """
         logger.info("Applying database migrations...")
         
         for sql_file in self.SQL_FILES:
@@ -90,12 +70,6 @@ class DatabaseSchema:
         logger.info("Database migrations completed!")
     
     async def verify_tables(self) -> bool:
-        """
-        Verify that all required tables exist.
-        
-        Returns:
-            True if all required tables exist
-        """
         required_tables = [
             "users",
             "channels", 
@@ -129,11 +103,6 @@ class DatabaseSchema:
             return False
     
     async def drop_all_tables(self) -> None:
-        """
-        Drop all tables (use with caution!).
-        
-        This is useful for development/testing.
-        """
         logger.warning("⚠️  Dropping all tables...")
         
         try:
@@ -153,12 +122,6 @@ class DatabaseSchema:
             raise
     
     async def get_table_info(self) -> dict:
-        """
-        Get information about existing tables.
-        
-        Returns:
-            Dict with table names and row counts
-        """
         try:
             result = await self.connection.fetchmany(
                 sql="""

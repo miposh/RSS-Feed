@@ -22,7 +22,6 @@ class UsersTable(BaseTable):
         user_id: int,
         username: Optional[str] = None,
     ) -> UserModel | None:
-        """Add a new user."""
         data: SingleQueryResult = await self.connection.insert_and_fetchone(
             sql="""
                 INSERT INTO users(user_id, username)
@@ -41,7 +40,6 @@ class UsersTable(BaseTable):
         return user_model
 
     async def delete(self, *, user_id: int) -> None:
-        """Delete a user."""
         await self.connection.execute(
             sql="""
                 DELETE FROM users WHERE user_id = %s;
@@ -51,7 +49,6 @@ class UsersTable(BaseTable):
         self._log(UsersTableAction.DELETE, user_id=user_id)
 
     async def get_user(self, *, user_id: int) -> UserModel | None:
-        """Get user by user_id."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
                 SELECT id, user_id, username, created_at, updated_at
@@ -65,7 +62,6 @@ class UsersTable(BaseTable):
         return user_model
 
     async def get_user_by_username(self, *, username: str) -> UserModel | None:
-        """Get user by username."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
                 SELECT id, user_id, username, created_at, updated_at
@@ -79,7 +75,6 @@ class UsersTable(BaseTable):
         return user_model
 
     async def update_username(self, *, user_id: int, username: str) -> UserModel | None:
-        """Update user username."""
         data: SingleQueryResult = await self.connection.update_and_fetchone(
             sql="""
                 UPDATE users
@@ -94,7 +89,6 @@ class UsersTable(BaseTable):
         return user_model
 
     async def get_all_users(self) -> list[UserModel] | None:
-        """Get all users."""
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
                 SELECT id, user_id, username, created_at, updated_at

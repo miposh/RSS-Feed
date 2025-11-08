@@ -2,8 +2,6 @@ from app.infrastructure.database.tables.enums.base import BaseTableActionEnum
 
 
 class ChannelsTableAction(BaseTableActionEnum):
-    """Actions for ChannelsTable."""
-    
     ADD = "ADD"
     DELETE = "DELETE"
     GET_CHANNEL = "GET_CHANNEL"

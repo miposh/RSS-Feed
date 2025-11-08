@@ -9,15 +9,17 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram_dialog import setup_dialogs
 
 from app.config.config import get_config
+from app.infrastructure.database.connection.connect_to_pg import get_pg_pool
+from app.infrastructure.database.schema import DatabaseSchema
+from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
 from handlers.group_handlers import group_router
 from handlers.private_handlers import private_router
 from dialogs.feed_management_dialog import feed_management_dialog
 from middlewares.chat_type_middleware import ChatTypeMiddleware
 from middlewares.error_middleware import ErrorHandlingMiddleware
 from middlewares.user_tracking import UserTrackingMiddleware
-from database.database import init_db
+from middlewares.database import DataBaseMiddleware
 from services.new_rss_service import NewRSSService
-from services.chat_service import ChatService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,27 +48,34 @@ async def set_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
     logger.info("Bot commands have been set successfully")
 
-async def on_startup(bot: Bot) -> NewRSSService:
+async def on_startup(bot: Bot, db_pool) -> NewRSSService:
+    """Initialize bot on startup."""
     logger.info("Bot is starting...")
     await set_bot_commands(bot)
-    await init_db()
     
-    chat_service = ChatService()
+    # Initialize database schema
+    async with db_pool.connection() as raw_connection:
+        connection = PsycopgConnection(raw_connection)
+        schema = DatabaseSchema(connection)
+        await schema.create_tables()
     
-    rss_service = NewRSSService(bot, chat_service)
+    # Start RSS service
+    rss_service = NewRSSService(bot, db_pool)
     await rss_service.start()
     
-    logger.info("Bot started successfully with new schema")
+    logger.info("Bot started successfully")
     return rss_service
 
 
-async def on_shutdown(bot: Bot, rss_service=None) -> None:
+async def on_shutdown(bot: Bot, rss_service=None, db_pool=None) -> None:
+    """Cleanup on shutdown."""
     logger.info("Bot is shutting down...")
     if rss_service:
         await rss_service.stop()
     
-    from repositories.base_repository import BaseRepository
-    await BaseRepository.close_connection()
+    if db_pool:
+        await db_pool.close()
+        logger.info("Database pool closed")
 
 async def start_polling(dp: Dispatcher, bot: Bot) -> None:
     await bot.delete_webhook(drop_pending_updates=True)
@@ -80,14 +89,20 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     
+    # Initialize database pool
+    db_pool = await get_pg_pool(config.database)
+    
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     
+    # Setup middlewares
     dp.update.outer_middleware(ErrorHandlingMiddleware())
+    dp.update.middleware(DataBaseMiddleware())
     dp.message.middleware(ChatTypeMiddleware())
     dp.message.middleware(UserTrackingMiddleware())
     dp.callback_query.middleware(UserTrackingMiddleware())
     
+    # Include routers
     dp.include_router(private_router)
     dp.include_router(group_router)
     dp.include_router(feed_management_dialog)
@@ -96,12 +111,14 @@ async def main() -> None:
     
     rss_service = None
     try:
-        rss_service = await on_startup(bot)
+        # Pass db_pool to startup and store it in dispatcher data
+        dp["db_pool"] = db_pool
+        rss_service = await on_startup(bot, db_pool)
         await start_polling(dp, bot)
     except Exception as e:
         logger.error(f"Error starting bot: {e}", exc_info=True)
     finally:
-        await on_shutdown(bot, rss_service)
+        await on_shutdown(bot, rss_service, db_pool)
         await bot.session.close()
 
 if __name__ == "__main__":

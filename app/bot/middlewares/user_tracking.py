@@ -2,18 +2,14 @@ import logging
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message, CallbackQuery
-from repositories.user_repository import UserRepository
-from config.config import config
+
+from app.infrastructure.database.db import DB
 
 logger = logging.getLogger(__name__)
 
 
 class UserTrackingMiddleware(BaseMiddleware):
-    """Automatically track and save users to database"""
-    
-    def __init__(self):
-        super().__init__()
-        self.user_repo = UserRepository(config.db_path)
+    """Automatically track and save users to database."""
     
     async def __call__(
         self,
@@ -29,13 +25,17 @@ class UserTrackingMiddleware(BaseMiddleware):
             user = event.from_user
         
         if user and not user.is_bot:
-            try:
-                await self.user_repo.add_or_update_user(
-                    user_id=user.id,
-                    username=user.username
-                )
-                logger.debug(f"User tracked: {user.id} (@{user.username})")
-            except Exception as e:
-                logger.error(f"Failed to track user {user.id}: {e}")
+            db: DB = data.get("db")
+            if db:
+                try:
+                    await db.users.add(
+                        user_id=user.id,
+                        username=user.username
+                    )
+                    logger.debug(f"User tracked: {user.id} (@{user.username})")
+                except Exception as e:
+                    logger.error(f"Failed to track user {user.id}: {e}")
+            else:
+                logger.warning("DB not available in middleware data")
         
         return await handler(event, data)

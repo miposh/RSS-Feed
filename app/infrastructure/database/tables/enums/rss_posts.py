@@ -2,8 +2,6 @@ from app.infrastructure.database.tables.enums.base import BaseTableActionEnum
 
 
 class RSSPostsTableAction(BaseTableActionEnum):
-    """Actions for RSSPostsTable."""
-    
     ADD = "ADD"
     DELETE = "DELETE"
     GET_POST = "GET_POST"

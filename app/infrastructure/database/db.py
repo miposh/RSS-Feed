@@ -6,11 +6,7 @@ from app.infrastructure.database.tables.rss_posts import RSSPostsTable
 from app.infrastructure.database.tables.feed_subscriptions import FeedSubscriptionsTable
 
 
-class DB:
-    """
-    Main database class that provides access to all table interfaces.
-    """
-    
+class DB:    
     def __init__(self, connection: BaseConnection) -> None:
         self.connection = connection
         self.users = UsersTable(connection=connection)

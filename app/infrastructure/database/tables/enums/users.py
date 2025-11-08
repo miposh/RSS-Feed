@@ -2,8 +2,6 @@ from app.infrastructure.database.tables.enums.base import BaseTableActionEnum
 
 
 class UsersTableAction(BaseTableActionEnum):
-    """Actions for UsersTable."""
-    
     ADD = "ADD"
     DELETE = "DELETE"
     GET_USER = "GET_USER"

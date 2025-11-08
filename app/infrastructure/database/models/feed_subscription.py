@@ -4,8 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class FeedSubscriptionModel(BaseModel):
-    """Pydantic model for FeedSubscription."""
-    
     id: int = Field(..., description="Internal auto-incrementing primary key")
     feed_id: int = Field(..., description="RSS feed reference")
     channel_id: int = Field(..., description="Channel reference")

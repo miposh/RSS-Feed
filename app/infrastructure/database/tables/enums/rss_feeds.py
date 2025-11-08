@@ -2,8 +2,6 @@ from app.infrastructure.database.tables.enums.base import BaseTableActionEnum
 
 
 class RSSFeedsTableAction(BaseTableActionEnum):
-    """Actions for RSSFeedsTable."""
-    
     ADD = "ADD"
     DELETE = "DELETE"
     GET_FEED = "GET_FEED"

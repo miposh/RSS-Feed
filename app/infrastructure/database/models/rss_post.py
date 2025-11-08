@@ -5,8 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class RSSPostModel(BaseModel):
-    """Pydantic model for RSSPost."""
-    
     id: int = Field(..., description="Internal auto-incrementing primary key")
     feed_id: int = Field(..., description="RSS feed reference")
     guid: str = Field(..., description="GUID/ID from feed item")

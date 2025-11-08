@@ -2,8 +2,6 @@ from app.infrastructure.database.tables.enums.base import BaseTableActionEnum
 
 
 class FeedSubscriptionsTableAction(BaseTableActionEnum):
-    """Actions for FeedSubscriptionsTable."""
-    
     ADD = "ADD"
     DELETE = "DELETE"
     GET_SUBSCRIPTION = "GET_SUBSCRIPTION"

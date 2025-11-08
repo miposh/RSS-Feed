@@ -1,6 +1,5 @@
 import logging
 import asyncio
-import hashlib
 import re
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
@@ -8,16 +7,15 @@ from typing import Dict, Deque
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from psycopg_pool import AsyncConnectionPool
 
-from services.chat_service import ChatService
+from app.infrastructure.database.db import DB
+from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
 from database.models.rss_post import RSSPost
 from config.config import config
 from fetcher.http_client import get_http_client, close_http_client
 from parser.rss_parser import parse_rss_feed
 from parser.article_extractor import extract_article_content
-from repositories.feed_repository import FeedRepository
-from repositories.chat_repository import ChatRepository
-from repositories.subscription_repository import SubscriptionRepository
 from services.gemini_service import rewrite_with_gemini
 
 logger = logging.getLogger(__name__)
@@ -27,18 +25,15 @@ CLEANUP_INTERVAL = int(config.get("CLEANUP_INTERVAL", 86400))
 
 
 class NewRSSService:
-    def __init__(self, bot: Bot, chat_service: ChatService):
+    """Service for fetching and distributing RSS feeds."""
+    
+    def __init__(self, bot: Bot, db_pool: AsyncConnectionPool):
         self.bot = bot
-        self.chat_service = chat_service
+        self.db_pool = db_pool
         self.check_interval = int(RSS_CHECK_INTERVAL)
         self.running = False
         self.task = None
         self.cleanup_task = None
-        
-        # Repositories
-        self.feed_repo = FeedRepository(config.db_path)
-        self.chat_repo = ChatRepository(config.db_path)
-        self.sub_repo = SubscriptionRepository(config.db_path)
         
         # Rate limiting for Telegram
         self.message_timestamps: Dict[int, Deque[datetime]] = defaultdict(deque)
@@ -103,28 +98,41 @@ class NewRSSService:
                 logger.error(f"Error during cleanup: {e}", exc_info=True)
     
     async def _check_all_feeds(self) -> None:
-        active_feeds = await self.feed_repo.get_active_feeds()
-        
-        if not active_feeds:
-            logger.debug("No active feeds to check")
-            return
-        
-        logger.info(f"Checking {len(active_feeds)} active feeds")
-        
-        for feed in active_feeds:
-            feed_id, url, title, last_modified, etag, pull_interval = feed
-            try:
-                await self._process_feed(feed_id, url, last_modified, etag)
-            except Exception as e:
-                logger.error(f"Error processing feed {url}: {e}", exc_info=True)
+        """Check all feeds that need to be fetched."""
+        async with self.db_pool.connection() as raw_connection:
+            async with raw_connection.transaction():
+                connection = PsycopgConnection(raw_connection)
+                db = DB(connection)
+                
+                active_feeds = await db.rss_feeds.get_feeds_to_fetch()
+                
+                if not active_feeds:
+                    logger.debug("No active feeds to check")
+                    return
+                
+                logger.info(f"Checking {len(active_feeds)} active feeds")
+                
+                for feed in active_feeds:
+                    try:
+                        await self._process_feed(
+                            db=db,
+                            feed_id=feed.id,
+                            feed_url=feed.url,
+                            last_modified=feed.last_modified,
+                            etag=feed.etag
+                        )
+                    except Exception as e:
+                        logger.error(f"Error processing feed {feed.url}: {e}", exc_info=True)
     
     async def _process_feed(
         self,
+        db: DB,
         feed_id: int,
         feed_url: str,
         last_modified: str = None,
         etag: str = None
     ) -> None:
+        """Process a single RSS feed."""
         logger.debug(f"Processing feed {feed_url}")
         
         try:
@@ -141,6 +149,7 @@ class NewRSSService:
             
             if content_bytes is None:
                 logger.warning(f"Failed to fetch feed {feed_url}: {error}")
+                await db.rss_feeds.update_error_count(feed_id=feed_id)
                 return
             
             posts = await parse_rss_feed(content_bytes)
@@ -148,8 +157,9 @@ class NewRSSService:
                 logger.debug(f"No posts in feed {feed_url}")
                 return
             
-            chat_ids = await self.sub_repo.get_chats_for_feed(feed_id)
-            if not chat_ids:
+            # Get channel IDs subscribed to this feed
+            channel_ids = await db.feed_subscriptions.get_channels_for_feed(feed_id=feed_id)
+            if not channel_ids:
                 logger.debug(f"No active subscriptions for feed {feed_id}")
                 return
             
@@ -167,14 +177,18 @@ class NewRSSService:
                         )
                         continue
                 
-                await self._process_post(post, feed_id, chat_ids)
+                await self._process_post(post, feed_id, channel_ids)
             
-            await self.feed_repo.update_feed_metadata(
+            # Update feed metadata
+            await db.rss_feeds.update_fetch_status(
                 feed_id=feed_id,
-                title=posts[0].title if posts else None,
-                last_modified=None,  
-                etag=None 
+                last_status=status,
+                etag=None,
+                last_modified=None
             )
+            
+            # Reset error count on successful fetch
+            await db.rss_feeds.reset_error_count(feed_id=feed_id)
             
         except Exception as e:
             logger.error(f"Error processing feed {feed_url}: {e}", exc_info=True)
@@ -198,11 +212,6 @@ class NewRSSService:
                     logger.warning("Не удалось извлечь полный текст, используем RSS контент")
             except Exception as e:
                 logger.error(f"Ошибка извлечения статьи: {e}", exc_info=True)
-        
-        text_for_hash = post.content if post.content else post.summary
-        content_hash = hashlib.md5(
-            f"{post.title}{post.link}{text_for_hash}".encode()
-        ).hexdigest()
         
         message = await self._format_post_message(post)
         

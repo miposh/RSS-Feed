@@ -5,8 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class RSSFeedModel(BaseModel):
-    """Pydantic model for RSSFeed."""
-    
     id: int = Field(..., description="Internal auto-incrementing primary key")
     url: str = Field(..., description="Canonical RSS/Atom feed URL")
     site_url: Optional[str] = Field(None, description="Website URL")

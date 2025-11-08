@@ -5,8 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class ChannelModel(BaseModel):
-    """Pydantic model for Channel."""
-    
     id: int = Field(..., description="Internal auto-incrementing primary key")
     channel_id: int = Field(..., description="Telegram chat/channel ID")
     username: Optional[str] = Field(None, description="Telegram channel username (without @)")

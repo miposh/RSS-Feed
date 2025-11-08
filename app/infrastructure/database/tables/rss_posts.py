@@ -1,4 +1,5 @@
 import logging
+import json
 from datetime import datetime
 from typing import Optional, Any
 
@@ -32,9 +33,7 @@ class RSSPostsTable(BaseTable):
         media_urls: Optional[dict[str, Any]] = None,
         tags: Optional[dict[str, Any]] = None,
     ) -> RSSPostModel | None:
-        """Add a new RSS post."""
-        # Convert dicts to JSON strings for JSONB columns
-        import json
+        
         media_json = json.dumps(media_urls) if media_urls else None
         tags_json = json.dumps(tags) if tags else None
         
@@ -55,7 +54,6 @@ class RSSPostsTable(BaseTable):
         return post_model
 
     async def get_post(self, *, post_id: int) -> RSSPostModel | None:
-        """Get post by id."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
                 SELECT * FROM rss_posts WHERE id = %s
@@ -67,7 +65,6 @@ class RSSPostsTable(BaseTable):
         return post_model
 
     async def get_post_by_guid(self, *, feed_id: int, guid: str) -> RSSPostModel | None:
-        """Get post by feed_id and guid."""
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
                 SELECT * FROM rss_posts WHERE feed_id = %s AND guid = %s
@@ -79,7 +76,6 @@ class RSSPostsTable(BaseTable):
         return post_model
 
     async def get_unsent_posts(self, *, limit: int = 100) -> list[RSSPostModel] | None:
-        """Get unsent posts."""
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
                 SELECT * FROM rss_posts
@@ -94,7 +90,6 @@ class RSSPostsTable(BaseTable):
         return posts
 
     async def mark_as_sent(self, *, post_id: int) -> RSSPostModel | None:
-        """Mark post as sent."""
         data: SingleQueryResult = await self.connection.update_and_fetchone(
             sql="""
                 UPDATE rss_posts
@@ -109,7 +104,6 @@ class RSSPostsTable(BaseTable):
         return post_model
 
     async def get_posts_by_feed(self, *, feed_id: int, limit: int = 50) -> list[RSSPostModel] | None:
-        """Get posts by feed_id."""
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
                 SELECT * FROM rss_posts
