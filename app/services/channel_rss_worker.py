@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import random
 import re
 from datetime import datetime, timedelta, timezone
 from collections import deque
@@ -200,7 +201,18 @@ class ChannelRSSWorker:
                         )
                         continue
                 
-                await self._process_post(post, feed_id)
+                # Check if post was already sent
+                existing_post = await db.rss_posts.get_post_by_guid(feed_id=feed_id, guid=post.guid)
+                if existing_post and existing_post.is_sent:
+                    logger.debug(f"Skipping already sent post: {post.title[:50]}")
+                    continue
+                
+                await self._process_post(post, feed_id, db)
+                
+                # Add random delay between posts (10-15 seconds)
+                delay = random.uniform(10, 15)
+                logger.debug(f"Waiting {delay:.1f} seconds before next post...")
+                await asyncio.sleep(delay)
             
             # Update feed metadata
             await db.rss_feeds.update_fetch_status(
@@ -220,6 +232,7 @@ class ChannelRSSWorker:
         self,
         post: RSSPost,
         feed_id: int,
+        db: DB,
     ) -> None:
         """Process and send a single post to the channel."""
         # Extract full article content if scraper is enabled for this channel
@@ -272,7 +285,34 @@ class ChannelRSSWorker:
             logger.warning(f"Bot forbidden in channel {self.channel.channel_id}")
         
         except Exception as e:
-            logger.error(f"Error sending to channel {self.channel.channel_id}: {e}")
+            logger.error(f"Error sending to channel {self.channel.channel_id} ({self.channel.title}): {e}")
+            return
+        
+        self._track_sent_message()
+        
+        # Mark post as sent in database
+        try:
+            # Save post to database if it doesn't exist
+            existing_post = await db.rss_posts.get_post_by_guid(feed_id=feed_id, guid=post.guid)
+            if not existing_post:
+                saved_post = await db.rss_posts.add(
+                    feed_id=feed_id,
+                    guid=post.guid,
+                    link=post.link,
+                    title=post.title,
+                    summary=post.summary,
+                    content_html=post.content,
+                    author=post.author,
+                    published_at=post.published_time
+                )
+                if saved_post:
+                    await db.rss_posts.mark_as_sent(post_id=saved_post.id)
+                    logger.debug(f"Post saved and marked as sent: {post.title[:50]}")
+            else:
+                await db.rss_posts.mark_as_sent(post_id=existing_post.id)
+                logger.debug(f"Existing post marked as sent: {post.title[:50]}")
+        except Exception as e:
+            logger.error(f"Error marking post as sent: {e}", exc_info=True)
     
     async def _format_post_message(self, post: RSSPost) -> str:
         """Format post message for Telegram."""
