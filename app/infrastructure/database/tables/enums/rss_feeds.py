@@ -1,0 +1,19 @@
+from app.infrastructure.database.tables.enums.base import BaseTableActionEnum
+
+
+class RSSFeedsTableAction(BaseTableActionEnum):
+    """Actions for RSSFeedsTable."""
+    
+    ADD = "ADD"
+    DELETE = "DELETE"
+    GET_FEED = "GET_FEED"
+    GET_FEED_BY_URL = "GET_FEED_BY_URL"
+    UPDATE_FEED_METADATA = "UPDATE_FEED_METADATA"
+    UPDATE_FETCH_STATUS = "UPDATE_FETCH_STATUS"
+    UPDATE_ERROR_COUNT = "UPDATE_ERROR_COUNT"
+    RESET_ERROR_COUNT = "RESET_ERROR_COUNT"
+    SET_BACKOFF = "SET_BACKOFF"
+    ENABLE_FEED = "ENABLE_FEED"
+    DISABLE_FEED = "DISABLE_FEED"
+    GET_FEEDS_TO_FETCH = "GET_FEEDS_TO_FETCH"
+    GET_ALL_FEEDS = "GET_ALL_FEEDS"

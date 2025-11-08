@@ -1,90 +1,183 @@
-import logging
-from typing import Optional, Tuple, List
-from repositories.base_repository import BaseRepository
+"""
+User repository using psycopg with raw SQL queries.
+"""
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
 
-logger = logging.getLogger(__name__)
+from psycopg import AsyncConnection
+from psycopg.rows import class_row
 
 
-class UserRepository(BaseRepository):
+@dataclass
+class User:
+    """User data model."""
+    id: int
+    user_id: int
+    username: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    async def add_or_update_user(
-        self,
-        user_id: int,
-        username: str = None
-    ) -> bool:
-        try:
-            await self.execute_and_commit(
+
+class UserRepository:
+    """Repository for User operations."""
+    
+    def __init__(self, conn: AsyncConnection):
+        self.conn = conn
+    
+    async def get_by_user_id(self, user_id: int) -> Optional[User]:
+        """
+        Get user by Telegram user_id.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            User or None if not found
+        """
+        async with self.conn.cursor(row_factory=class_row(User)) as cur:
+            await cur.execute(
                 """
-                INSERT INTO users (id, username)
-                VALUES (?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    username = excluded.username
+                SELECT id, user_id, username, created_at, updated_at
+                FROM users
+                WHERE user_id = %s
+                """,
+                (user_id,)
+            )
+            return await cur.fetchone()
+    
+    async def get_by_id(self, id: int) -> Optional[User]:
+        """
+        Get user by internal ID.
+        
+        Args:
+            id: Internal database ID
+            
+        Returns:
+            User or None if not found
+        """
+        async with self.conn.cursor(row_factory=class_row(User)) as cur:
+            await cur.execute(
+                """
+                SELECT id, user_id, username, created_at, updated_at
+                FROM users
+                WHERE id = %s
+                """,
+                (id,)
+            )
+            return await cur.fetchone()
+    
+    async def find_by_username(self, username: str) -> list[User]:
+        """
+        Find users by username (case-insensitive search).
+        
+        Args:
+            username: Username to search for
+            
+        Returns:
+            List of matching users
+        """
+        async with self.conn.cursor(row_factory=class_row(User)) as cur:
+            await cur.execute(
+                """
+                SELECT id, user_id, username, created_at, updated_at
+                FROM users
+                WHERE username ILIKE %s
+                """,
+                (f"%{username}%",)
+            )
+            return await cur.fetchall()
+    
+    async def upsert_from_bot(
+        self, 
+        user_id: int, 
+        username: Optional[str] = None
+    ) -> User:
+        """
+        Create or update user from Telegram data.
+        
+        Args:
+            user_id: Telegram user ID
+            username: Telegram username (without @)
+            
+        Returns:
+            User instance
+        """
+        async with self.conn.cursor(row_factory=class_row(User)) as cur:
+            await cur.execute(
+                """
+                INSERT INTO users (user_id, username)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE
+                SET username = EXCLUDED.username
+                RETURNING id, user_id, username, created_at, updated_at
                 """,
                 (user_id, username)
             )
-            return True
-        except Exception as e:
-            logger.error(f"Error adding/updating user {user_id}: {e}", exc_info=True)
-            return False
-
-    async def get_user_by_id(self, user_id: int) -> Optional[Tuple]:
-        try:
-            conn = await self.get_connection()
-            cursor = await conn.execute(
-                "SELECT id, username FROM users WHERE id = ?",
-                (user_id,)
-            )
-            return await cursor.fetchone()
-        except Exception as e:
-            logger.error(f"Error getting user {user_id}: {e}", exc_info=True)
-            return None
-
-    async def get_user_by_username(self, username: str) -> Optional[Tuple]:
-        try:
-            conn = await self.get_connection()
-            cursor = await conn.execute(
-                "SELECT id, username FROM users WHERE username = ?",
-                (username,)
-            )
-            return await cursor.fetchone()
-        except Exception as e:
-            logger.error(f"Error getting user by username {username}: {e}", exc_info=True)
-            return None
-
-    async def get_all_users(self) -> List[Tuple]:
-        try:
-            conn = await self.get_connection()
-            cursor = await conn.execute(
+            result = await cur.fetchone()
+            if result is None:
+                raise RuntimeError("Failed to upsert user")
+            return result
+    
+    async def update_username(self, user_id: int, username: str) -> Optional[User]:
+        """
+        Update user's username.
+        
+        Args:
+            user_id: Telegram user ID
+            username: New username
+            
+        Returns:
+            Updated User or None if not found
+        """
+        async with self.conn.cursor(row_factory=class_row(User)) as cur:
+            await cur.execute(
                 """
-                SELECT id, username 
+                UPDATE users
+                SET username = %s
+                WHERE user_id = %s
+                RETURNING id, user_id, username, created_at, updated_at
+                """,
+                (username, user_id)
+            )
+            return await cur.fetchone()
+    
+    async def get_all(self, limit: int = 100, offset: int = 0) -> list[User]:
+        """
+        Get all users with pagination.
+        
+        Args:
+            limit: Number of records
+            offset: Offset
+            
+        Returns:
+            List of users
+        """
+        async with self.conn.cursor(row_factory=class_row(User)) as cur:
+            await cur.execute(
+                """
+                SELECT id, user_id, username, created_at, updated_at
                 FROM users
-                """
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset)
             )
-            return await cursor.fetchall()
-        except Exception as e:
-            logger.error(f"Error getting all users: {e}", exc_info=True)
-            return []
-
-    async def delete_user(self, user_id: int) -> bool:
-        try:
-            await self.execute_and_commit(
-                "DELETE FROM users WHERE id = ?",
+            return await cur.fetchall()
+    
+    async def exists(self, user_id: int) -> bool:
+        """
+        Check if user exists.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            True if user exists
+        """
+        async with self.conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM users WHERE user_id = %s",
                 (user_id,)
             )
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting user {user_id}: {e}", exc_info=True)
-            return False
-
-    async def user_exists(self, user_id: int) -> bool:
-        try:
-            conn = await self.get_connection()
-            cursor = await conn.execute(
-                "SELECT 1 FROM users WHERE id = ? LIMIT 1",
-                (user_id,)
-            )
-            result = await cursor.fetchone()
-            return result is not None
-        except Exception as e:
-            logger.error(f"Error checking user exists {user_id}: {e}", exc_info=True)
-            return False
+            return await cur.fetchone() is not None

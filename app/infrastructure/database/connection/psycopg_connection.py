@@ -18,7 +18,7 @@ class PsycopgConnection(BaseConnection):
     async def execute(
         self,
         sql: str,
-        params: dict[str, Any] | None = None,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
         connection: Any | None = None,
     ) -> None:
         async with self._connection.cursor() as cur:
@@ -27,7 +27,7 @@ class PsycopgConnection(BaseConnection):
     async def fetchone(
         self,
         sql: str,
-        params: dict[str, Any] | None = None,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
         connection: Any | None = None,
     ) -> SingleQueryResult:
         async with self._connection.cursor() as cur:
@@ -38,7 +38,7 @@ class PsycopgConnection(BaseConnection):
     async def fetchmany(
         self,
         sql: str,
-        params: dict[str, Any] | None = None,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
         connection: Any | None = None,
     ) -> MultipleQueryResult:
         async with self._connection.cursor() as cur:
@@ -49,7 +49,7 @@ class PsycopgConnection(BaseConnection):
     async def insert_and_fetchone(
         self,
         sql: str,
-        params: dict[str, Any],
+        params: tuple[Any, ...],
         connection: Any | None = None,
     ) -> SingleQueryResult:
         async with self._connection.cursor() as cur:
@@ -60,7 +60,7 @@ class PsycopgConnection(BaseConnection):
     async def insert_and_fetchmany(
         self,
         sql: str,
-        params: list[dict[str, Any]],
+        params: list[tuple[Any, ...]],
         connection: Any | None = None,
     ) -> MultipleQueryResult:
         async with self._connection.cursor() as cur:
@@ -71,7 +71,7 @@ class PsycopgConnection(BaseConnection):
     async def update_and_fetchone(
         self,
         sql: str,
-        params: dict[str, Any],
+        params: tuple[Any, ...],
         connection: Any | None = None,
     ) -> SingleQueryResult:
         async with self._connection.cursor() as cur:
@@ -82,7 +82,7 @@ class PsycopgConnection(BaseConnection):
     async def update_and_fetchmany(
         self,
         sql: str,
-        params: list[dict[str, Any]],
+        params: list[tuple[Any, ...]],
         connection: Any | None = None,
     ) -> MultipleQueryResult:
         async with self._connection.cursor() as cur:

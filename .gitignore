@@ -1,6 +1,5 @@
 # Data directories
 data/
-migrations/
 
 # Python
 __pycache__/

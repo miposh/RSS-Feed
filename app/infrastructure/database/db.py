@@ -1,17 +1,20 @@
 from app.infrastructure.database.connection.base import BaseConnection
+from app.infrastructure.database.tables.users import UsersTable
+from app.infrastructure.database.tables.channels import ChannelsTable
+from app.infrastructure.database.tables.rss_feeds import RSSFeedsTable
+from app.infrastructure.database.tables.rss_posts import RSSPostsTable
+from app.infrastructure.database.tables.feed_subscriptions import FeedSubscriptionsTable
 
 
 class DB:
     """
     Main database class that provides access to all table interfaces.
-    Add table instances here as you create them.
     """
     
     def __init__(self, connection: BaseConnection) -> None:
         self.connection = connection
-        # TODO: Initialize table classes here
-        # Example:
-        # from app.infrastructure.database.tables.users import UsersTable
-        # self.users = UsersTable(connection=connection)
-        # self.feeds = FeedsTable(connection=connection)
-        # self.chats = ChatsTable(connection=connection)
+        self.users = UsersTable(connection=connection)
+        self.channels = ChannelsTable(connection=connection)
+        self.rss_feeds = RSSFeedsTable(connection=connection)
+        self.rss_posts = RSSPostsTable(connection=connection)
+        self.feed_subscriptions = FeedSubscriptionsTable(connection=connection)
