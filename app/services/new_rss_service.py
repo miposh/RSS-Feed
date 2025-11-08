@@ -11,8 +11,8 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.infrastructure.database.db import DB
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
-from database.models.rss_post import RSSPost
-from config.config import config
+from app.database.models.rss_post import RSSPost
+from config.config import get_config
 from fetcher.http_client import get_http_client, close_http_client
 from parser.rss_parser import parse_rss_feed
 from parser.article_extractor import extract_article_content
@@ -20,8 +20,8 @@ from services.gemini_service import rewrite_with_gemini
 
 logger = logging.getLogger(__name__)
 
-RSS_CHECK_INTERVAL = config.get("RSS_CHECK_INTERVAL", 300)
-CLEANUP_INTERVAL = int(config.get("CLEANUP_INTERVAL", 86400))
+RSS_CHECK_INTERVAL = get_config().get("RSS_CHECK_INTERVAL", 300)
+CLEANUP_INTERVAL = int(get_config().get("CLEANUP_INTERVAL", 86400))
 
 
 class NewRSSService:
@@ -40,14 +40,14 @@ class NewRSSService:
         self.max_messages_per_minute_per_group = 20
         
         # Gemini AI settings
-        self.gemini_enabled = config.get("GEMINI_ENABLED", "false").lower() == "true"
-        self.gemini_api_key = config.get("GEMINI_API_KEY")
+        self.gemini_enabled = get_config().get("GEMINI_ENABLED", "false").lower() == "true"
+        self.gemini_api_key = get_config().get("GEMINI_API_KEY")
         if self.gemini_enabled and not self.gemini_api_key:
             logger.warning("Gemini включен, но API ключ не найден")
             self.gemini_enabled = False
         
         # ScraperAPI settings for full article extraction
-        self.scraper_enabled = config.get("SCRAPER_ENABLED", "false").lower() == "true"
+        self.scraper_enabled = get_config().get("SCRAPER_ENABLED", "false").lower() == "true"
     
     async def start(self) -> None:
         if self.running:

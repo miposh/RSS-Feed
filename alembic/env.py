@@ -6,7 +6,7 @@ from logging.config import fileConfig
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from alembic import context
-from app.config.config import get_config
+from config.config import get_config
 from app.database.models import Base
 
 # Alembic Config object
