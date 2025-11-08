@@ -148,15 +148,52 @@ def get_article_extractor() -> ArticleExtractor:
     return _article_extractor
 
 
-async def extract_article_content(url: str) -> Optional[str]:
+async def extract_article_content(url: str, api_key: Optional[str] = None) -> Optional[str]:
     """
     Convenience function to extract article content from URL.
     
     Args:
         url: The article URL to fetch and parse
+        api_key: Optional custom ScraperAPI key (uses global config if None)
         
     Returns:
         Extracted article text or None if extraction failed
     """
-    extractor = get_article_extractor()
-    return await extractor.extract_article_text(url)
+    if api_key:
+        # Create a temporary extractor with custom API key
+        try:
+            from scraperapi_sdk import ScraperAPIClient
+            client = ScraperAPIClient(api_key)
+            
+            # Fetch HTML with custom client
+            loop = asyncio.get_event_loop()
+            html_content = await loop.run_in_executor(
+                None, 
+                lambda: client.get(url=url)
+            )
+            
+            if not html_content:
+                logger.warning(f"ScraperAPI вернул пустой ответ для {url}")
+                return None
+            
+            # Parse with newspaper4k
+            from newspaper import Article
+            article = Article(url, language='ru')
+            article.download_state = 2  # ArticleDownloadState.SUCCESS
+            article.html = html_content
+            article.parse()
+            
+            if article.text:
+                logger.info(f"Успешно извлечен текст статьи ({len(article.text)} символов) для {url} с custom API key")
+                return article.text.strip()
+            else:
+                logger.warning(f"newspaper4k не смог извлечь текст из {url}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Ошибка извлечения статьи с custom API key {url}: {e}", exc_info=True)
+            return None
+    else:
+        # Use global extractor
+        extractor = get_article_extractor()
+        return await extractor.extract_article_text(url)

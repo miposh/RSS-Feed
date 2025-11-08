@@ -7,6 +7,23 @@ from aiogram_dialog.widgets.input import MessageInput
 from app.bot.dialogs.flows.main.states import MainSG
 from app.infrastructure.database.db import DB
 from app.services.chat_service import ChatService
+from app.services.channel_rss_worker import ChannelRSSWorkerService
+
+
+async def _reload_channel_worker(
+    dialog_manager: DialogManager,
+    channel_id: int,
+) -> None:
+    """Reload channel worker after settings change."""
+    try:
+        worker_service: ChannelRSSWorkerService = dialog_manager.middleware_data.get("channel_worker_service")
+        if worker_service:
+            await worker_service.reload_channel(channel_id=channel_id)
+    except Exception as e:
+        # Log but don't fail - worker reload is not critical
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error reloading worker for channel {channel_id}: {e}", exc_info=True)
 
 
 async def on_group_selected(
@@ -52,6 +69,8 @@ async def on_toggle_group(
         if channel:
             status = "включен" if channel.parsing_is_enabled else "выключен"
             await callback.answer(f"✅ Парсинг {status}")
+            # Reload the worker with new settings
+            await _reload_channel_worker(dialog_manager, int(selected_channel_id))
             # Refresh the window to update button text
             await dialog_manager.show()
         else:
@@ -192,6 +211,8 @@ async def on_toggle_scraper(
         if channel:
             status = "включен" if channel.scraper_is_enabled else "выключен"
             await callback.answer(f"✅ Скрапер {status}")
+            # Reload the worker with new settings
+            await _reload_channel_worker(dialog_manager, int(selected_channel_id))
             await dialog_manager.show()
         else:
             await callback.answer("❌ Не удалось изменить статус")
@@ -251,6 +272,8 @@ async def on_interval_preset_selected(
         if channel:
             minutes = interval // 60
             await callback.answer(f"✅ Интервал установлен: {minutes} минут")
+            # Reload the worker with new interval
+            await _reload_channel_worker(dialog_manager, int(selected_channel_id))
             await dialog_manager.switch_to(MainSG.channel_settings)
         else:
             await callback.answer("❌ Не удалось обновить интервал")
@@ -299,6 +322,8 @@ async def on_interval_input(
         if channel:
             minutes = interval // 60
             await message.answer(f"✅ Интервал обновлен: {interval} секунд ({minutes} минут)")
+            # Reload the worker with new interval
+            await _reload_channel_worker(dialog_manager, int(selected_channel_id))
             await dialog_manager.switch_to(MainSG.channel_settings)
         else:
             await message.answer("❌ Не удалось обновить интервал")
@@ -338,6 +363,8 @@ async def on_api_key_input(
                 await message.answer("✅ API ключ успешно обновлен")
             else:
                 await message.answer("✅ API ключ удален (будет использоваться глобальный)")
+            # Reload the worker with new API key
+            await _reload_channel_worker(dialog_manager, int(selected_channel_id))
             await dialog_manager.switch_to(MainSG.channel_settings)
         else:
             await message.answer("❌ Не удалось обновить API ключ")

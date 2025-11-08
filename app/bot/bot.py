@@ -1,10 +1,8 @@
-import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram_dialog import setup_dialogs
 
@@ -17,6 +15,7 @@ from app.bot.middlewares.database import DataBaseMiddleware
 from app.bot.dialogs.flows import dialogs
 from app.bot.handlers import routers
 from app.services.new_rss_service import NewRSSService
+from app.services.channel_rss_worker import ChannelRSSWorkerService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,24 +42,33 @@ logger = logging.getLogger(__name__)
 #     await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
 #     logger.info("Bot commands have been set successfully")
 
-async def on_startup(bot: Bot, db_pool) -> NewRSSService:
+async def on_startup(bot: Bot, db_pool) -> tuple[NewRSSService, ChannelRSSWorkerService]:
     logger.info("Bot is starting...")
     # await set_bot_commands(bot)
     
     # Migrations are applied separately via apply_migrations.py script
     # This keeps bot startup fast and migrations explicit
     
+    # Start the global RSS service (legacy)
     rss_service = NewRSSService(bot, db_pool)
     await rss_service.start()
     
+    # Start the channel-based RSS worker service (new)
+    channel_worker_service = ChannelRSSWorkerService(bot, db_pool)
+    await channel_worker_service.start()
+    
     logger.info("Bot started successfully")
-    return rss_service
+    return rss_service, channel_worker_service
 
 
-async def on_shutdown(bot: Bot, rss_service=None, db_pool=None) -> None:
+async def on_shutdown(bot: Bot, rss_service=None, channel_worker_service=None, db_pool=None) -> None:
     logger.info("Bot is shutting down...")
+    
     if rss_service:
         await rss_service.stop()
+    
+    if channel_worker_service:
+        await channel_worker_service.stop()
     
     if db_pool:
         await db_pool.close()
@@ -104,12 +112,15 @@ async def main() -> None:
     setup_dialogs(dp)
     
     rss_service = None
+    channel_worker_service = None
+
     try:
         dp["db_pool"] = db_pool
-        rss_service = await on_startup(bot, db_pool)
+        rss_service, channel_worker_service = await on_startup(bot, db_pool)
+        dp["channel_worker_service"] = channel_worker_service  # Make it available to handlers
         await start_polling(dp, bot)
     except Exception as e:
         logger.error(f"Error starting bot: {e}", exc_info=True)
     finally:
-        await on_shutdown(bot, rss_service, db_pool)
+        await on_shutdown(bot, rss_service, channel_worker_service, db_pool)
         await bot.session.close()

@@ -209,3 +209,18 @@ class ChannelsTable(BaseTable):
         channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
         self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, scraper_api_key=api_key)
         return channel_model
+
+    async def get_channels_with_parsing_enabled(self) -> list[ChannelModel] | None:
+        """Get all channels with parsing enabled."""
+        data: MultipleQueryResult = await self.connection.fetchmany(
+            sql="""
+                SELECT id, channel_id, username, title, parsing_is_enabled, 
+                       interval_time, scraper_is_enabled, scraper_api_key, created_at
+                FROM channels
+                WHERE parsing_is_enabled = TRUE
+                ORDER BY created_at DESC
+            """,
+        )
+        channels = data.to_models(model=ChannelModel)
+        self._log(ChannelsTableAction.GET_ALL_CHANNELS, count=len(data) if data else 0, parsing_enabled=True)
+        return channels
