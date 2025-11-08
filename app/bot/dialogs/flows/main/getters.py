@@ -21,4 +21,5 @@ async def get_rss_parser_data(dialog_manager: DialogManager, db: DB, bot: Bot, *
     return {
         "group_buttons": group_buttons,
         "add_group_url": add_group_url,
+        "bot_username": bot_username,
     }
