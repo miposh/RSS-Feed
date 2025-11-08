@@ -37,19 +37,9 @@ class RedisConfig(BaseModel):
 
 
 class RSSConfig(BaseModel):
-    check_interval: int = Field(default=300, description="RSS check interval in seconds.")
-    cleanup_interval: int = Field(default=86400, description="Cleanup interval in seconds.")
+    check_interval: int = Field(default=300, description="Interval for checking RSS feeds in seconds.")
+    cleanup_interval: int = Field(default=86400, description="Interval for cleanup tasks in seconds.")
     sent_posts_retention_days: int = Field(default=30, description="Days to keep sent posts.")
-
-
-class GeminiConfig(BaseModel):
-    enabled: bool = Field(default=False, description="Enable Gemini AI rewriting.")
-    api_key: str | None = Field(None, description="Google Gemini API key.")
-
-
-class ScraperConfig(BaseModel):
-    enabled: bool = Field(default=False, description="Enable ScraperAPI.")
-    api_key: str | None = Field(None, description="ScraperAPI key.")
 
 
 class AppConfig(BaseModel):
@@ -58,8 +48,6 @@ class AppConfig(BaseModel):
     postgres: PostgresConfig
     redis: RedisConfig
     rss: RSSConfig
-    gemini: GeminiConfig
-    scraper: ScraperConfig
 
 
 # Инициализация Dynaconf
@@ -113,22 +101,10 @@ def get_config() -> AppConfig:
         sent_posts_retention_days=_settings.get("sent_posts_retention_days", 30),
     )
 
-    gemini = GeminiConfig(
-        enabled=_settings.get("gemini_enabled", False),
-        api_key=_settings.get("gemini_api_key"),
-    )
-
-    scraper = ScraperConfig(
-        enabled=_settings.get("scraper_enabled", False),
-        api_key=_settings.get("scraper_api_key"),
-    )
-
     return AppConfig(
         logs=logs,
         bot=bot,
         postgres=postgres,
         redis=redis,
         rss=rss,
-        gemini=gemini,
-        scraper=scraper,
     )

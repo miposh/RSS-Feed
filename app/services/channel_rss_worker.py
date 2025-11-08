@@ -12,12 +12,10 @@ from psycopg_pool import AsyncConnectionPool
 from app.infrastructure.database.db import DB
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
 from app.infrastructure.database.models.channel import ChannelModel
-from config.config import get_config
 from app.services.fetcher.http_client import get_http_client
 from app.services.parser.rss_parser import parse_rss_feed
 from app.services.parser.models import RSSPost
 from app.services.parser.article_extractor import extract_article_content
-from app.services.gemini_service import rewrite_with_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +38,6 @@ class ChannelRSSWorker:
         # Rate limiting for Telegram
         self.message_timestamps: Deque[datetime] = deque()
         self.max_messages_per_minute = 20
-        
-        # Gemini AI settings
-        config = get_config()
-        self.gemini_enabled = config.gemini.enabled
-        self.gemini_api_key = config.gemini.api_key
-        if self.gemini_enabled and not self.gemini_api_key:
-            logger.warning("Gemini включен, но API ключ не найден")
-            self.gemini_enabled = False
-        
-        # Global scraper API key as fallback
-        self.global_scraper_api_key = config.scraper.api_key if hasattr(config.scraper, 'api_key') else None
         
         logger.info(
             f"Worker initialized for channel {self.channel.channel_id} ({self.channel.title}): "
@@ -237,7 +224,7 @@ class ChannelRSSWorker:
         """Process and send a single post to the channel."""
         # Extract full article content if scraper is enabled for this channel
         scraper_enabled = self.channel.scraper_is_enabled
-        scraper_api_key = self.channel.scraper_api_key or self.global_scraper_api_key
+        scraper_api_key = self.channel.scraper_api_key
         
         if scraper_enabled and scraper_api_key and post.link:
             try:
@@ -308,19 +295,6 @@ class ChannelRSSWorker:
         
         if text_to_use:
             clean_text = clean_html(text_to_use)
-            
-            # Rewrite text with Gemini if enabled
-            if self.gemini_enabled and self.gemini_api_key:
-                try:
-                    logger.debug(f"Rewriting text with Gemini: {len(clean_text)} chars")
-                    clean_text = await rewrite_with_gemini(
-                        text=clean_text,
-                        api_key=self.gemini_api_key
-                    )
-                    logger.info("Text successfully rewritten with Gemini")
-                except Exception as e:
-                    logger.error(f"Error rewriting with Gemini: {e}")
-                    # Continue with original text
             
             # Limit to 4080 characters
             max_text_length = 4080

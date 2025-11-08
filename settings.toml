@@ -4,8 +4,6 @@
 rss_check_interval = 300
 cleanup_interval = 86400
 sent_posts_retention_days = 30
-gemini_enabled = false
-scraper_enabled = false
 
 [default.logs]
 level_name = "INFO"

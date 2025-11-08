@@ -4,7 +4,6 @@ alembic
 dynaconf
 feedparser
 httpx
-google-genai
 scraperapi-sdk
 newspaper4k
 Brotli

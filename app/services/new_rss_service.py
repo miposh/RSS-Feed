@@ -15,8 +15,6 @@ from config.config import get_config
 from app.services.fetcher.http_client import get_http_client, close_http_client
 from app.services.parser.rss_parser import parse_rss_feed
 from app.services.parser.models import RSSPost
-from app.services.parser.article_extractor import extract_article_content
-from app.services.gemini_service import rewrite_with_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +37,6 @@ class NewRSSService:
         # Rate limiting for Telegram
         self.message_timestamps: Dict[int, Deque[datetime]] = defaultdict(deque)
         self.max_messages_per_minute_per_group = 20
-        
-        # Gemini AI settings
-        config = get_config()
-        self.gemini_enabled = config.gemini.enabled
-        self.gemini_api_key = config.gemini.api_key
-        if self.gemini_enabled and not self.gemini_api_key:
-            logger.warning("Gemini включен, но API ключ не найден")
-            self.gemini_enabled = False
-        
-        # ScraperAPI settings for full article extraction
-        self.scraper_enabled = config.scraper.enabled
     
     async def start(self) -> None:
         if self.running:
@@ -201,19 +188,8 @@ class NewRSSService:
         feed_id: int,
         chat_telegram_ids: list
     ) -> None:
-        # Extract full article content if ScraperAPI is enabled
-        if self.scraper_enabled and post.link:
-            try:
-                logger.debug(f"Извлечение полного текста статьи: {post.link}")
-                full_article_text = await extract_article_content(post.link)
-                if full_article_text:
-                    # Replace content with full article text
-                    post.content = full_article_text
-                    logger.info(f"Успешно извлечен полный текст ({len(full_article_text)} символов)")
-                else:
-                    logger.warning("Не удалось извлечь полный текст, используем RSS контент")
-            except Exception as e:
-                logger.error(f"Ошибка извлечения статьи: {e}", exc_info=True)
+        # Note: ScraperAPI is now handled per-channel in ChannelRSSWorker
+        # This legacy service doesn't use scraper
         
         message = await self._format_post_message(post)
         
@@ -266,19 +242,6 @@ class NewRSSService:
         
         if text_to_use:
             clean_text = clean_html(text_to_use)
-            
-            # Рерайт текста через Gemini, если включено
-            if self.gemini_enabled and self.gemini_api_key:
-                try:
-                    logger.debug(f"Рерайт текста через Gemini: {len(clean_text)} символов")
-                    clean_text = await rewrite_with_gemini(
-                        text=clean_text,
-                        api_key=self.gemini_api_key
-                    )
-                    logger.info("Текст успешно рерайчен через Gemini")
-                except Exception as e:
-                    logger.error(f"Ошибка рерайта через Gemini: {e}")
-                    # Продолжаем с оригинальным текстом
             
             # Limit to 4080 characters as requested
             max_text_length = 4080
