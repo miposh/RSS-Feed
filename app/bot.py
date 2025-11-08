@@ -8,7 +8,7 @@ from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeAll
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram_dialog import setup_dialogs
 
-from config.config import config
+from app.config.config import get_config
 from handlers.group_handlers import group_router
 from handlers.private_handlers import private_router
 from dialogs.feed_management_dialog import feed_management_dialog
@@ -73,8 +73,10 @@ async def start_polling(dp: Dispatcher, bot: Bot) -> None:
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 async def main() -> None:
+    config = get_config()
+    
     bot = Bot(
-        token=config.bot_token,
+        token=config.bot.token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     
