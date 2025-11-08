@@ -50,18 +50,18 @@ async def init_db() -> None:
         raise
 
 async def add_group(chat_id: int) -> bool:
-    from src.repositories.group_repository import GroupRepository
+    from app.repositories.group_repository import GroupRepository
     repo = GroupRepository(DB_PATH)
     return await repo.add_group(chat_id)
 
 async def remove_group(chat_id: int) -> bool:
-    from src.repositories.group_repository import GroupRepository
+    from app.repositories.group_repository import GroupRepository
     repo = GroupRepository(DB_PATH)
     return await repo.remove_group(chat_id)
 
 async def add_rss_feed(url: str, chat_id: int) -> bool:
-    from src.repositories.group_repository import GroupRepository
-    from src.repositories.rss_repository import RSSRepository
+    from app.repositories.group_repository import GroupRepository
+    from app.repositories.rss_repository import RSSRepository
     
     group_repo = GroupRepository(DB_PATH)
     rss_repo = RSSRepository(DB_PATH)
@@ -73,8 +73,8 @@ async def add_rss_feed(url: str, chat_id: int) -> bool:
     return await rss_repo.add_feed(url, group_id)
 
 async def remove_rss_feed(url: str, chat_id: int) -> bool:
-    from src.repositories.group_repository import GroupRepository
-    from src.repositories.rss_repository import RSSRepository
+    from app.repositories.group_repository import GroupRepository
+    from app.repositories.rss_repository import RSSRepository
     
     group_repo = GroupRepository(DB_PATH)
     rss_repo = RSSRepository(DB_PATH)
@@ -86,8 +86,8 @@ async def remove_rss_feed(url: str, chat_id: int) -> bool:
     return await rss_repo.remove_feed(url, group_id)
 
 async def get_rss_feeds_for_group(chat_id: int) -> List[str]:
-    from src.repositories.group_repository import GroupRepository
-    from src.repositories.rss_repository import RSSRepository
+    from app.repositories.group_repository import GroupRepository
+    from app.repositories.rss_repository import RSSRepository
     
     group_repo = GroupRepository(DB_PATH)
     rss_repo = RSSRepository(DB_PATH)
@@ -99,19 +99,19 @@ async def get_rss_feeds_for_group(chat_id: int) -> List[str]:
     return await rss_repo.get_feeds_for_group(group_id)
 
 async def get_all_feeds() -> List[Tuple[int, str, int]]:
-    from src.repositories.rss_repository import RSSRepository
+    from app.repositories.rss_repository import RSSRepository
     
     rss_repo = RSSRepository(DB_PATH)
     return await rss_repo.get_all_feeds()
 
 async def is_post_sent(post_guid: str, feed_id: int) -> bool:
-    from src.repositories.rss_repository import RSSRepository
+    from app.repositories.rss_repository import RSSRepository
     
     rss_repo = RSSRepository(DB_PATH)
     return await rss_repo.is_post_sent(post_guid, feed_id)
 
 async def mark_post_as_sent(post_guid: str, feed_id: int) -> bool:
-    from src.repositories.rss_repository import RSSRepository
+    from app.repositories.rss_repository import RSSRepository
     
     rss_repo = RSSRepository(DB_PATH)
     return await rss_repo.mark_post_as_sent(post_guid, feed_id)

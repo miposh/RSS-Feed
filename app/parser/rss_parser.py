@@ -6,7 +6,7 @@ from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 
 import feedparser
-from models.rss_post import RSSPost
+from database.models.rss_post import RSSPost
 
 logger = logging.getLogger(__name__)
 

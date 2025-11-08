@@ -10,7 +10,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from services.chat_service import ChatService
-from models.rss_post import RSSPost
+from database.models.rss_post import RSSPost
 from config.config import config
 from fetcher.http_client import get_http_client, close_http_client
 from parser.rss_parser import parse_rss_feed

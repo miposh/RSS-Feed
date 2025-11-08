@@ -9,3 +9,4 @@ google-genai
 scraperapi-sdk
 newspaper4k
 Brotli
+lxml_html_clean
