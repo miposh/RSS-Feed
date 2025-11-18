@@ -116,6 +116,8 @@ class ChannelRSSWorker:
     
     async def _check_channel_feeds(self) -> None:
         """Check all RSS feeds subscribed by this channel."""
+        to_process = []
+
         async with self.db_pool.connection() as raw_connection:
             async with raw_connection.transaction():
                 connection = PsycopgConnection(raw_connection)
@@ -130,33 +132,38 @@ class ChannelRSSWorker:
                     logger.debug(f"No subscriptions for channel {self.channel.channel_id}")
                     return
                 
-                logger.info(
-                    f"Checking {len(subscriptions)} feeds for channel {self.channel.channel_id} ({self.channel.title})"
-                )
-                
                 for subscription in subscriptions:
-                    try:
-                        # Get feed info
-                        feed = await db.rss_feeds.get_feed(feed_id=subscription.feed_id)
-                        if not feed or not feed.enabled:
-                            continue
-                        
-                        await self._process_feed(
-                            db=db,
-                            feed_id=feed.id,
-                            feed_url=feed.url,
-                            last_modified=feed.last_modified,
-                            etag=feed.etag
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Error processing subscription {subscription.id} for channel {self.channel.channel_id}: {e}",
-                            exc_info=True
-                        )
+                    # Get feed info
+                    feed = await db.rss_feeds.get_feed(feed_id=subscription.feed_id)
+                    if not feed or not feed.enabled:
+                        continue
+                    
+                    to_process.append((subscription, feed))
+
+        if not to_process:
+            logger.debug(f"No enabled feeds for channel {self.channel.channel_id}")
+            return
+
+        logger.info(
+            f"Checking {len(to_process)} feeds for channel {self.channel.channel_id} ({self.channel.title})"
+        )
+        
+        for subscription, feed in to_process:
+            try:
+                await self._process_feed(
+                    feed_id=feed.id,
+                    feed_url=feed.url,
+                    last_modified=feed.last_modified,
+                    etag=feed.etag,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error processing subscription {subscription.id} for channel {self.channel.channel_id}: {e}",
+                    exc_info=True
+                )
     
     async def _process_feed(
         self,
-        db: DB,
         feed_id: int,
         feed_url: str,
         last_modified: str = None,
@@ -179,7 +186,12 @@ class ChannelRSSWorker:
             
             if content_bytes is None:
                 logger.warning(f"Failed to fetch feed {feed_url}: {error}")
-                await db.rss_feeds.update_error_count(feed_id=feed_id)
+                
+                async with self.db_pool.connection() as raw_connection:
+                    async with raw_connection.transaction():
+                        connection = PsycopgConnection(raw_connection)
+                        db = DB(connection)
+                        await db.rss_feeds.update_error_count(feed_id=feed_id)
                 return
             
             posts = await parse_rss_feed(content_bytes)
@@ -202,28 +214,38 @@ class ChannelRSSWorker:
                         continue
                 
                 # Check if post was already sent
-                existing_post = await db.rss_posts.get_post_by_guid(feed_id=feed_id, guid=post.guid)
+                async with self.db_pool.connection() as raw_connection:
+                    async with raw_connection.transaction():
+                        connection = PsycopgConnection(raw_connection)
+                        db = DB(connection)
+                        existing_post = await db.rss_posts.get_post_by_guid(
+                            feed_id=feed_id,
+                            guid=post.guid,
+                        )
+
                 if existing_post and existing_post.is_sent:
                     logger.debug(f"Skipping already sent post: {post.title[:50]}")
                     continue
                 
-                await self._process_post(post, feed_id, db)
+                await self._process_post(post, feed_id)
                 
                 # Add random delay between posts (10-15 seconds)
                 delay = random.uniform(10, 15)
                 logger.debug(f"Waiting {delay:.1f} seconds before next post...")
                 await asyncio.sleep(delay)
             
-            # Update feed metadata
-            await db.rss_feeds.update_fetch_status(
-                feed_id=feed_id,
-                last_status=status,
-                etag=None,
-                last_modified=None
-            )
-            
-            # Reset error count on successful fetch
-            await db.rss_feeds.reset_error_count(feed_id=feed_id)
+            # Update feed metadata and reset error count on success
+            async with self.db_pool.connection() as raw_connection:
+                async with raw_connection.transaction():
+                    connection = PsycopgConnection(raw_connection)
+                    db = DB(connection)
+                    await db.rss_feeds.update_fetch_status(
+                        feed_id=feed_id,
+                        last_status=status,
+                        etag=None,
+                        last_modified=None,
+                    )
+                    await db.rss_feeds.reset_error_count(feed_id=feed_id)
             
         except Exception as e:
             logger.error(f"Error processing feed {feed_url}: {e}", exc_info=True)
@@ -232,7 +254,6 @@ class ChannelRSSWorker:
         self,
         post: RSSPost,
         feed_id: int,
-        db: DB,
     ) -> None:
         """Process and send a single post to the channel."""
         # Extract full article content if scraper is enabled for this channel
@@ -291,26 +312,42 @@ class ChannelRSSWorker:
         self._track_sent_message()
         
         # Mark post as sent in database
+        await self._save_and_mark_post(feed_id=feed_id, post=post)
+    
+    async def _save_and_mark_post(
+        self,
+        feed_id: int,
+        post: RSSPost,
+    ) -> None:
+        """Save post to database and mark it as sent."""
         try:
-            # Save post to database if it doesn't exist
-            existing_post = await db.rss_posts.get_post_by_guid(feed_id=feed_id, guid=post.guid)
-            if not existing_post:
-                saved_post = await db.rss_posts.add(
-                    feed_id=feed_id,
-                    guid=post.guid,
-                    link=post.link,
-                    title=post.title,
-                    summary=post.summary,
-                    content_html=post.content,
-                    author=post.author,
-                    published_at=post.published_time
-                )
-                if saved_post:
-                    await db.rss_posts.mark_as_sent(post_id=saved_post.id)
-                    logger.debug(f"Post saved and marked as sent: {post.title[:50]}")
-            else:
-                await db.rss_posts.mark_as_sent(post_id=existing_post.id)
-                logger.debug(f"Existing post marked as sent: {post.title[:50]}")
+            async with self.db_pool.connection() as raw_connection:
+                async with raw_connection.transaction():
+                    connection = PsycopgConnection(raw_connection)
+                    db = DB(connection)
+
+                    # Save post to database if it doesn't exist
+                    existing_post = await db.rss_posts.get_post_by_guid(
+                        feed_id=feed_id,
+                        guid=post.guid,
+                    )
+                    if not existing_post:
+                        saved_post = await db.rss_posts.add(
+                            feed_id=feed_id,
+                            guid=post.guid,
+                            link=post.link,
+                            title=post.title,
+                            summary=post.summary,
+                            content_html=post.content,
+                            author=post.author,
+                            published_at=post.published_time,
+                        )
+                        if saved_post:
+                            await db.rss_posts.mark_as_sent(post_id=saved_post.id)
+                            logger.debug(f"Post saved and marked as sent: {post.title[:50]}")
+                    else:
+                        await db.rss_posts.mark_as_sent(post_id=existing_post.id)
+                        logger.debug(f"Existing post marked as sent: {post.title[:50]}")
         except Exception as e:
             logger.error(f"Error marking post as sent: {e}", exc_info=True)
     

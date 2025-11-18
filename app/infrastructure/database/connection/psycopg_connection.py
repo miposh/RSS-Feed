@@ -23,7 +23,6 @@ class PsycopgConnection(BaseConnection):
     ) -> None:
         async with self._connection.cursor() as cur:
             await cur.execute(sql, params)
-        await self._connection.commit()
 
     async def fetchone(
         self,

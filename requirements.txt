@@ -11,3 +11,6 @@ lxml_html_clean
 psycopg
 pydantic
 asyncpg
+psycopg_pool
+pytest
+pytest-asyncio

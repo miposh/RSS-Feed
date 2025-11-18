@@ -57,25 +57,30 @@ class ChatService:
             return False
     
     async def remove_feed_from_chat(self, channel_id: int, feed_url: str) -> bool:
-        """Remove a feed subscription from a channel."""
+        """Remove a feed subscription from a channel and delete the feed source."""
         try:
             # Get feed
             feed = await self.db.rss_feeds.get_feed_by_url(url=feed_url)
             if not feed:
                 logger.warning(f"Feed {feed_url} not found")
                 return False
-            
+
             # Get channel
             channel = await self.db.channels.get_channel(channel_id=channel_id)
             if not channel:
                 logger.warning(f"Channel {channel_id} not found")
                 return False
-            
+
             # Delete subscription
             await self.db.feed_subscriptions.delete(
                 feed_id=feed.id,
                 channel_id=channel.id
             )
+
+            # Delete the feed source completely
+            await self.db.rss_feeds.delete(feed_id=feed.id)
+            logger.info(f"Deleted feed {feed_url} (id={feed.id}) from channel {channel_id}")
+
             return True
         except Exception as e:
             logger.error(f"Error removing feed from chat: {e}", exc_info=True)

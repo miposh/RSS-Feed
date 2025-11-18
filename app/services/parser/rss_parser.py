@@ -94,6 +94,9 @@ class RSSParser:
         # Извлекаем полный текст из различных возможных тегов
         content = RSSParser._extract_full_text(entry)
         
+        # Извлекаем автора
+        author = RSSParser._extract_author(entry)
+        
         published_time = RSSParser._parse_published_time(entry)
         
         return RSSPost(
@@ -102,8 +105,30 @@ class RSSParser:
             link=link,
             summary=summary,
             content=content,
+            author=author,
             published_time=published_time
         )
+    
+    @staticmethod
+    def _extract_author(entry) -> Optional[str]:
+        """
+        Извлекает автора статьи из различных возможных тегов.
+        Проверяет: author, dc:creator, author_detail
+        """
+        # Проверяем стандартный author
+        if hasattr(entry, 'author') and entry.author:
+            return entry.author
+        
+        # Проверяем dc:creator (Dublin Core)
+        if hasattr(entry, 'dc_creator') and entry.dc_creator:
+            return entry.dc_creator
+        
+        # Проверяем author_detail
+        if hasattr(entry, 'author_detail') and entry.author_detail:
+            if isinstance(entry.author_detail, dict):
+                return entry.author_detail.get('name', '')
+        
+        return None
     
     @staticmethod
     def _extract_full_text(entry) -> str:

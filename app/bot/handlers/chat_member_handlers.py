@@ -34,7 +34,7 @@ async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> N
         
         if channel:
             success_message = (
-                f"✅ Группа <b>{chat.title}</b>успешно подключена к боту.\n\n"
+                f"✅ Группа <b>{chat.title}</b> успешно подключена к боту.\n\n"
             )
             
             try:

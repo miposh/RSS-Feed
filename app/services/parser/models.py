@@ -14,4 +14,5 @@ class RSSPost:
     link: str
     summary: str = ""
     content: str = ""
+    author: Optional[str] = None
     published_time: Optional[datetime] = None

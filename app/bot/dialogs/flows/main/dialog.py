@@ -1,7 +1,7 @@
 from aiogram.enums import ParseMode
 from aiogram_dialog import Dialog, Window
 from aiogram_dialog.widgets.input import MessageInput
-from aiogram_dialog.widgets.kbd import Back, Button, Group, Select, Url
+from aiogram_dialog.widgets.kbd import Button, Group, Select, Url
 from aiogram_dialog.widgets.text import Const, Format
 
 
@@ -74,7 +74,11 @@ rss_parser_dialog = Dialog(
             url=Format("{add_group_url}"),
             id="add_bot_url",
         ),
-        Back(Const("← Назад")),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_rss_parser_btn",
+            on_click=lambda c, w, m: m.switch_to(MainSG.rss_parser),
+        ),
         getter=get_rss_parser_data,
         state=MainSG.add_group_instruction,
         parse_mode=ParseMode.HTML,
@@ -117,7 +121,11 @@ rss_parser_dialog = Dialog(
             id="delete_group_btn",
             on_click=on_delete_group,
         ),
-        Back(Const("← Назад")),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_rss_parser_btn2",
+            on_click=lambda c, w, m: m.switch_to(MainSG.rss_parser),
+        ),
         getter=get_group_menu_data,
         state=MainSG.group_menu,
         parse_mode=ParseMode.HTML,
@@ -128,7 +136,11 @@ rss_parser_dialog = Dialog(
             "<b>Количество источников:</b> {sources_count}\n\n"
             "{sources}"
         ),
-        Back(Const("← Назад")),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_group_menu_btn2",
+            on_click=lambda c, w, m: m.switch_to(MainSG.group_menu),
+        ),
         getter=get_sources_list_data,
         state=MainSG.sources_list,
         parse_mode=ParseMode.HTML,
@@ -143,7 +155,11 @@ rss_parser_dialog = Dialog(
         MessageInput(
             func=on_source_url_input,
         ),
-        Back(Const("← Назад")),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_group_menu_btn",
+            on_click=lambda c, w, m: m.switch_to(MainSG.group_menu),
+        ),
         getter=get_group_menu_data,
         state=MainSG.add_source,
         parse_mode=ParseMode.HTML,
@@ -161,7 +177,11 @@ rss_parser_dialog = Dialog(
             items="source_buttons",
             on_click=on_source_selected,
         ),
-        Back(Const("← Назад")),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_group_menu_btn3",
+            on_click=lambda c, w, m: m.switch_to(MainSG.group_menu),
+        ),
         getter=get_remove_source_data,
         state=MainSG.remove_source,
         parse_mode=ParseMode.HTML,
@@ -189,7 +209,11 @@ rss_parser_dialog = Dialog(
             id="set_api_key_btn",
             on_click=on_set_api_key_clicked,
         ),
-        Back(Const("← Назад")),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_group_menu_btn4",
+            on_click=lambda c, w, m: m.switch_to(MainSG.group_menu),
+        ),
         getter=get_channel_settings_data,
         state=MainSG.channel_settings,
         parse_mode=ParseMode.HTML,

@@ -14,7 +14,6 @@ from app.bot.middlewares.user_tracking import UserTrackingMiddleware
 from app.bot.middlewares.database import DataBaseMiddleware
 from app.bot.dialogs.flows import dialogs
 from app.bot.handlers import routers
-from app.services.new_rss_service import NewRSSService
 from app.services.channel_rss_worker import ChannelRSSWorkerService
 
 logging.basicConfig(
@@ -42,16 +41,16 @@ logger = logging.getLogger(__name__)
 #     await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
 #     logger.info("Bot commands have been set successfully")
 
-async def on_startup(bot: Bot, db_pool) -> tuple[NewRSSService, ChannelRSSWorkerService]:
+async def on_startup(bot: Bot, db_pool) -> tuple[None, ChannelRSSWorkerService]:
     logger.info("Bot is starting...")
     # await set_bot_commands(bot)
     
     # Migrations are applied separately via apply_migrations.py script
     # This keeps bot startup fast and migrations explicit
     
-    # Start the global RSS service (legacy)
-    rss_service = NewRSSService(bot, db_pool)
-    await rss_service.start()
+    # NOTE: NewRSSService (legacy) is disabled to prevent duplicate posts
+    # Only using ChannelRSSWorkerService which properly tracks sent posts
+    rss_service = None  # Disabled legacy service
     
     # Start the channel-based RSS worker service (new)
     channel_worker_service = ChannelRSSWorkerService(bot, db_pool)

@@ -20,11 +20,12 @@ class HTTPClient:
         self._domain_semaphores: Dict[str, asyncio.Semaphore] = {}
         self._etag_cache: Dict[str, str] = {}
         self._last_modified_cache: Dict[str, str] = {}
+        self._current_verify_ssl: Optional[bool] = None
         
         self.max_connections = 100
         self.max_connections_per_domain = 10
         self.timeout = httpx.Timeout(
-            timeout=30.0,
+            30.0,  # default timeout
             connect=5.0,
             read=10.0
         )
@@ -48,24 +49,31 @@ class HTTPClient:
                     await cls._instance._init_session()
         return cls._instance
     
-    async def _init_session(self) -> None:
+    async def _init_session(self, verify_ssl: bool = False) -> None:
+        # Recreate session if verify_ssl setting changed
+        if self._session and not self._session.is_closed and self._current_verify_ssl != verify_ssl:
+            await self._session.aclose()
+            self._session = None
+        
         if self._session is None or self._session.is_closed:
             limits = httpx.Limits(
                 max_connections=self.max_connections,
                 max_keepalive_connections=self.max_connections_per_domain,
             )
-            
+
             self._session = httpx.AsyncClient(
                 limits=limits,
                 timeout=self.timeout,
                 headers=self.default_headers,
                 follow_redirects=True,
+                verify=verify_ssl,
             )
+            self._current_verify_ssl = verify_ssl
             logger.info(
                 "HTTP client initialized",
                 extra={
                     "max_connections": self.max_connections,
-                    "timeout_total": self.timeout.timeout,
+                    "verify_ssl": verify_ssl,
                 }
             )
     
@@ -111,7 +119,7 @@ class HTTPClient:
         verify_ssl: bool = False,
     ) -> Tuple[Optional[bytes], int, Optional[str]]:
         if not self._session:
-            await self._init_session()
+            await self._init_session(verify_ssl=verify_ssl)
         
         
         domain = urlparse(url).netloc
@@ -127,7 +135,6 @@ class HTTPClient:
                     response = await self._session.get(
                         url,
                         headers=headers,
-                        verify=verify_ssl,
                     )
                     status = response.status_code
                     
