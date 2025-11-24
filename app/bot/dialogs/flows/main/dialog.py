@@ -7,6 +7,7 @@ from aiogram_dialog.widgets.text import Const, Format
 
 from app.bot.dialogs.flows.main.getters import (
     get_channel_settings_data,
+    get_global_settings_data,
     get_group_menu_data,
     get_remove_source_data,
     get_rss_parser_data,
@@ -19,6 +20,12 @@ from app.bot.dialogs.flows.main.handlers import (
     on_back_to_settings,
     on_custom_interval_clicked,
     on_delete_group,
+    on_delete_group_confirmed,
+    on_global_api_key_input,
+    on_global_disable_parsing,
+    on_global_enable_parsing,
+    on_global_set_api_key_clicked,
+    on_global_settings_clicked,
     on_group_selected,
     on_interval_input,
     on_interval_preset_selected,
@@ -56,6 +63,11 @@ rss_parser_dialog = Dialog(
             text=Const("➕ Добавить группу"),
             id="add_group_btn",
             on_click=on_add_group_clicked,
+        ),
+        Button(
+            text=Const("Все группы"),
+            id="global_settings_btn",
+            on_click=on_global_settings_clicked,
         ),
         getter=get_rss_parser_data,
         state=MainSG.rss_parser,
@@ -220,6 +232,30 @@ rss_parser_dialog = Dialog(
     ),
     Window(
         Format(
+            "<b>🗑️ Удаление группы</b>\n"
+            "<b>Группа:</b> {group_name}\n"
+            "⚠️ Вы уверены, что хотите удалить эту группу?\n"
+            "Это действие удалит:\n"
+            "• Все подписки на RSS-ленты\n"
+            "• Все настройки группы\n\n"
+            "<b>Это действие нельзя отменить.</b>"
+        ),
+        Button(
+            text=Const("✅ Да, удалить"),
+            id="confirm_delete_btn",
+            on_click=on_delete_group_confirmed,
+        ),
+        Button(
+            text=Const("❌ Отмена"),
+            id="cancel_delete_btn",
+            on_click=lambda c, w, m: m.switch_to(MainSG.channel_settings),
+        ),
+        getter=get_group_menu_data,
+        state=MainSG.delete_group_confirm,
+        parse_mode=ParseMode.HTML,
+    ),
+    Window(
+        Format(
             "<b>⏱ Интервал проверки RSS</b>\n\n"
             "<b>Текущий интервал:</b> {interval_time} секунд ({interval_minutes} минут)\n\n"
             "Выберите интервал проверки:"
@@ -294,6 +330,57 @@ rss_parser_dialog = Dialog(
         ),
         getter=get_channel_settings_data,
         state=MainSG.set_scraper_api_key,
+        parse_mode=ParseMode.HTML,
+    ),
+    # ============ Global Settings Windows ============
+    Window(
+        Format(
+            "<b>🌐 Глобальные настройки</b>\n\n"
+            "Настройки применяются ко всем каналам сразу.\n\n"
+            "<b>📊 Статистика:</b>\n"
+            "• Всего каналов: {total_channels}\n"
+            "• Парсинг включен: {enabled_count}\n"
+            "• Парсинг выключен: {disabled_count}"
+        ),
+        Button(
+            text=Const("✅ Включить парсинг для всех"),
+            id="global_enable_parsing_btn",
+            on_click=on_global_enable_parsing,
+        ),
+        Button(
+            text=Const("❌ Выключить парсинг для всех"),
+            id="global_disable_parsing_btn",
+            on_click=on_global_disable_parsing,
+        ),
+        Button(
+            text=Const("🔑 Установить API ключ для всех"),
+            id="global_set_api_key_btn",
+            on_click=on_global_set_api_key_clicked,
+        ),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_main_btn",
+            on_click=lambda c, w, m: m.switch_to(MainSG.rss_parser),
+        ),
+        getter=get_global_settings_data,
+        state=MainSG.global_settings,
+        parse_mode=ParseMode.HTML,
+    ),
+    Window(
+        Const(
+            "<b>🔑 Установить API ключ для всех каналов</b>\n\n"
+            "Отправьте API ключ ScraperAPI, который будет установлен для всех каналов.\n\n"
+            "Отправьте пустое сообщение или пробел, чтобы удалить API ключ у всех каналов."
+        ),
+        MessageInput(
+            func=on_global_api_key_input,
+        ),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_global_settings_btn",
+            on_click=lambda c, w, m: m.switch_to(MainSG.global_settings),
+        ),
+        state=MainSG.global_set_api_key,
         parse_mode=ParseMode.HTML,
     ),
 )

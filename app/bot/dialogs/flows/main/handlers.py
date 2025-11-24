@@ -15,14 +15,18 @@ async def _reload_channel_worker(
     channel_id: int,
 ) -> None:
     """Reload channel worker after settings change."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
         worker_service: ChannelRSSWorkerService = dialog_manager.middleware_data.get("channel_worker_service")
         if worker_service:
+            logger.info(f"Reloading worker for channel {channel_id}")
             await worker_service.reload_channel(channel_id=channel_id)
+            logger.info(f"Worker reloaded for channel {channel_id}. Active workers: {list(worker_service.workers.keys())}")
+        else:
+            logger.warning("channel_worker_service not found in middleware_data")
     except Exception as e:
-        # Log but don't fail - worker reload is not critical
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Error reloading worker for channel {channel_id}: {e}", exc_info=True)
 
 
@@ -111,9 +115,48 @@ async def on_delete_group(
     widget: Any,
     dialog_manager: DialogManager,
 ) -> None:
-    """Handle delete group button."""
-    # TODO: Implement group deletion with confirmation
-    await callback.answer("Удаление группы в разработке")
+    """Handle delete group button - show confirmation."""
+    await dialog_manager.switch_to(MainSG.delete_group_confirm)
+
+
+async def on_delete_group_confirmed(
+    callback: CallbackQuery,
+    widget: Any,
+    dialog_manager: DialogManager,
+) -> None:
+    """Handle confirmed group deletion."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    db: DB = dialog_manager.middleware_data.get("db")
+    selected_channel_id = dialog_manager.dialog_data.get("selected_channel_id")
+    
+    if not selected_channel_id:
+        await callback.answer("❌ Ошибка: группа не выбрана")
+        return
+    
+    try:
+        channel_id = int(selected_channel_id)
+        
+        # Stop worker first
+        worker_service: ChannelRSSWorkerService = dialog_manager.middleware_data.get("channel_worker_service")
+        if worker_service and channel_id in worker_service.workers:
+            worker = worker_service.workers.pop(channel_id)
+            await worker.stop()
+            logger.info(f"Stopped worker for channel {channel_id} before deletion")
+        
+        # Delete channel from database (cascades to subscriptions)
+        await db.channels.delete(channel_id=channel_id)
+        
+        await callback.answer("✅ Группа удалена")
+        logger.info(f"Channel {channel_id} deleted")
+        
+        # Go back to main menu
+        await dialog_manager.switch_to(MainSG.rss_parser)
+        
+    except Exception as e:
+        logger.error(f"Error deleting channel {selected_channel_id}: {e}", exc_info=True)
+        await callback.answer(f"❌ Ошибка: {str(e)}")
 
 
 async def on_source_url_input(
@@ -368,5 +411,101 @@ async def on_api_key_input(
             await dialog_manager.switch_to(MainSG.channel_settings)
         else:
             await message.answer("❌ Не удалось обновить API ключ")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+
+# ============ Global Settings Handlers ============
+
+async def on_global_settings_clicked(
+    callback: CallbackQuery,
+    widget: Any,
+    dialog_manager: DialogManager,
+) -> None:
+    """Handle global settings button click."""
+    await dialog_manager.switch_to(MainSG.global_settings)
+
+
+async def on_global_enable_parsing(
+    callback: CallbackQuery,
+    widget: Any,
+    dialog_manager: DialogManager,
+) -> None:
+    """Enable parsing for all channels."""
+    db: DB = dialog_manager.middleware_data.get("db")
+    
+    try:
+        count = await db.channels.set_parsing_for_all(enabled=True)
+        await callback.answer(f"✅ Парсинг включен для всех каналов ({count})")
+        
+        # Reload all workers
+        worker_service: ChannelRSSWorkerService = dialog_manager.middleware_data.get("channel_worker_service")
+        if worker_service:
+            await worker_service._sync_workers()
+        
+        await dialog_manager.show()
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {str(e)}")
+
+
+async def on_global_disable_parsing(
+    callback: CallbackQuery,
+    widget: Any,
+    dialog_manager: DialogManager,
+) -> None:
+    """Disable parsing for all channels."""
+    db: DB = dialog_manager.middleware_data.get("db")
+    
+    try:
+        count = await db.channels.set_parsing_for_all(enabled=False)
+        await callback.answer(f"✅ Парсинг выключен для всех каналов ({count})")
+        
+        # Reload all workers
+        worker_service: ChannelRSSWorkerService = dialog_manager.middleware_data.get("channel_worker_service")
+        if worker_service:
+            await worker_service._sync_workers()
+        
+        await dialog_manager.show()
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {str(e)}")
+
+
+async def on_global_set_api_key_clicked(
+    callback: CallbackQuery,
+    widget: Any,
+    dialog_manager: DialogManager,
+) -> None:
+    """Handle global set API key button click."""
+    await dialog_manager.switch_to(MainSG.global_set_api_key)
+
+
+async def on_global_api_key_input(
+    message: Message,
+    widget: MessageInput,
+    dialog_manager: DialogManager,
+) -> None:
+    """Handle global scraper API key input."""
+    db: DB = dialog_manager.middleware_data.get("db")
+    
+    api_key = message.text.strip()
+    
+    # Allow empty string to clear the API key
+    if not api_key:
+        api_key = None
+    
+    try:
+        count = await db.channels.set_api_key_for_all(api_key=api_key)
+        
+        if api_key:
+            await message.answer(f"✅ API ключ установлен для всех каналов ({count})")
+        else:
+            await message.answer(f"✅ API ключ удален для всех каналов ({count})")
+        
+        # Reload all workers
+        worker_service: ChannelRSSWorkerService = dialog_manager.middleware_data.get("channel_worker_service")
+        if worker_service:
+            await worker_service._sync_workers()
+        
+        await dialog_manager.switch_to(MainSG.global_settings)
     except Exception as e:
         await message.answer(f"❌ Ошибка: {str(e)}")

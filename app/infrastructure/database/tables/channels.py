@@ -224,3 +224,27 @@ class ChannelsTable(BaseTable):
         channels = data.to_models(model=ChannelModel)
         self._log(ChannelsTableAction.GET_ALL_CHANNELS, count=len(data) if data else 0, parsing_enabled=True)
         return channels
+
+    async def set_parsing_for_all(self, *, enabled: bool) -> int:
+        """Enable or disable parsing for all channels. Returns count of updated channels."""
+        result = await self.connection.execute(
+            sql="""
+                UPDATE channels
+                SET parsing_is_enabled = %s
+            """,
+            params=(enabled,),
+        )
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, all_channels=True, parsing_is_enabled=enabled)
+        return result if result else 0
+
+    async def set_api_key_for_all(self, *, api_key: Optional[str]) -> int:
+        """Set scraper API key for all channels. Returns count of updated channels."""
+        result = await self.connection.execute(
+            sql="""
+                UPDATE channels
+                SET scraper_api_key = %s
+            """,
+            params=(api_key,),
+        )
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, all_channels=True, scraper_api_key="***" if api_key else None)
+        return result if result else 0

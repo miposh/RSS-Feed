@@ -182,3 +182,24 @@ async def get_channel_settings_data(dialog_manager: DialogManager, db: DB, **kwa
         "scraper_toggle_text": scraper_toggle_text,
         "api_key_status": api_key_status,
     }
+
+
+async def get_global_settings_data(dialog_manager: DialogManager, db: DB, **kwargs) -> dict:
+    """Get data for global settings window."""
+    channels = await db.channels.get_all_channels()
+    
+    if not channels:
+        return {
+            "total_channels": 0,
+            "enabled_count": 0,
+            "disabled_count": 0,
+        }
+    
+    enabled_count = sum(1 for c in channels if c.parsing_is_enabled)
+    disabled_count = len(channels) - enabled_count
+    
+    return {
+        "total_channels": len(channels),
+        "enabled_count": enabled_count,
+        "disabled_count": disabled_count,
+    }
