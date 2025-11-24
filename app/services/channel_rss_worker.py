@@ -1,13 +1,11 @@
 import logging
 import asyncio
-import random
 import re
-from datetime import datetime, timedelta, timezone
-from collections import deque
-from typing import Dict, Deque, Optional
+from datetime import datetime, timezone
+from typing import Dict, Optional
 
 from aiogram import Bot
-from aiogram.types import InputMediaPhoto
+from aiogram.types import URLInputFile
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from psycopg_pool import AsyncConnectionPool
 
@@ -18,6 +16,7 @@ from app.services.fetcher.http_client import get_http_client
 from app.services.parser.rss_parser import parse_rss_feed
 from app.services.parser.models import RSSPost
 from app.services.parser.article_extractor import extract_article_content
+from app.services.message_queue import get_message_queue
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +35,10 @@ class ChannelRSSWorker:
         self.db_pool = db_pool
         self.running = False
         self.task: Optional[asyncio.Task] = None
-        
-        # Rate limiting for Telegram
-        self.message_timestamps: Deque[datetime] = deque()
-        self.max_messages_per_minute = 20
-        
+
+        # Get global message queue
+        self.message_queue = get_message_queue()
+
         logger.info(
             f"Worker initialized for channel {self.channel.channel_id} ({self.channel.title}): "
             f"interval={self.channel.interval_time}s, scraper={self.channel.scraper_is_enabled}"
@@ -247,11 +245,6 @@ class ChannelRSSWorker:
             # Process posts to send (oldest first to maintain chronological order in chat)
             for post in reversed(posts_to_send):
                 await self._process_post(post, feed_id)
-                
-                # Add random delay between posts (10-15 seconds)
-                delay = random.uniform(10, 15)
-                logger.debug(f"Waiting {delay:.1f} seconds before next post...")
-                await asyncio.sleep(delay)
             
             # Update feed metadata and reset error count on success
             async with self.db_pool.connection() as raw_connection:
@@ -304,74 +297,65 @@ class ChannelRSSWorker:
             except Exception as e:
                 logger.error(f"Error extracting article: {e}", exc_info=True)
 
-        # Prepare message
-        message = await self._format_post_message(post, include_hidden_link=(len(post.image_urls) == 1))
+        # Determine image URL
+        image_url = post.image_urls[0] if post.image_urls else None
         
-        if not self._can_send_message():
-            logger.warning(f"Rate limit exceeded for channel {self.channel.channel_id}")
-            await asyncio.sleep(60)  # Wait a minute before retrying
-        
-        try:
-            # Send as Album if multiple images
-            if len(post.image_urls) > 1:
-                # Telegram allows max 10 items in media group
-                media_group = []
-                for i, url in enumerate(post.image_urls[:10]):
-                    media = InputMediaPhoto(media=url)
-                    # Add caption to the first item if it fits
-                    if i == 0 and len(message) <= 1024:
-                        media.caption = message
-                        media.parse_mode = "HTML"
-                    media_group.append(media)
-                
-                # If message was too long for caption, send it separately first
-                if len(message) > 1024:
+        # Prepare message/caption
+        message = await self._format_post_message(post, include_hidden_link=False)
+
+        # Create async function to send the message
+        async def send_message():
+            try:
+                if image_url:
+                    # Send as photo with caption (max 1024 chars for caption)
+                    caption = message[:1024] if len(message) > 1024 else message
+                    
+                    await self.bot.send_photo(
+                        chat_id=self.channel.channel_id,
+                        photo=URLInputFile(image_url),
+                        caption=caption,
+                        parse_mode="HTML",
+                        show_caption_above_media=False
+                    )
+                else:
+                    # No image - send as text message
                     await self.bot.send_message(
                         chat_id=self.channel.channel_id,
                         text=message,
-                        disable_web_page_preview=False
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
                     )
-                    # Send album without caption
-                    await self.bot.send_media_group(
-                        chat_id=self.channel.channel_id,
-                        media=media_group
+
+                logger.info(
+                    f"Sent post to channel {self.channel.channel_id} ({self.channel.title}): {post.title[:50]}"
+                )
+
+            except TelegramBadRequest as e:
+                if "chat not found" in str(e).lower():
+                    logger.warning(
+                        f"Channel {self.channel.channel_id} not found. Consider disabling parsing."
                     )
                 else:
-                    # Send album with caption
-                    await self.bot.send_media_group(
-                        chat_id=self.channel.channel_id,
-                        media=media_group
-                    )
-            else:
-                # Send as normal message (hidden link will handle the single image)
-                await self.bot.send_message(
-                    chat_id=self.channel.channel_id,
-                    text=message,
-                    disable_web_page_preview=False
-                )
-            
-            self._track_sent_message()
-            logger.info(
-                f"Sent post to channel {self.channel.channel_id} ({self.channel.title}): {post.title[:50]}"
-            )
-            
-        except TelegramBadRequest as e:
-            if "chat not found" in str(e).lower():
-                logger.warning(
-                    f"Channel {self.channel.channel_id} not found. Consider disabling parsing."
-                )
-            else:
-                logger.error(f"Bad request for channel {self.channel.channel_id}: {e}")
-        
-        except TelegramForbiddenError:
-            logger.warning(f"Bot forbidden in channel {self.channel.channel_id}")
-        
-        except Exception as e:
-            logger.error(f"Error sending to channel {self.channel.channel_id} ({self.channel.title}): {e}")
-            return
-        
-        self._track_sent_message()
-        
+                    logger.error(f"Bad request for channel {self.channel.channel_id}: {e}")
+                raise
+
+            except TelegramForbiddenError:
+                logger.warning(f"Bot forbidden in channel {self.channel.channel_id}")
+                raise
+
+            except Exception as e:
+                logger.error(f"Error sending to channel {self.channel.channel_id} ({self.channel.title}): {e}")
+                raise
+
+        # Enqueue the message (queue will handle rate limiting and flood control)
+        await self.message_queue.enqueue(
+            chat_id=self.channel.channel_id,
+            send_func=send_message,
+            priority=0
+        )
+
+        logger.debug(f"Enqueued post for channel {self.channel.channel_id}: {post.title[:50]}")
+
         # Mark post as sent in database
         await self._save_and_mark_post(feed_id=feed_id, post=post)
     
@@ -462,20 +446,6 @@ class ChannelRSSWorker:
             message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
         
         return message
-    
-    def _can_send_message(self) -> bool:
-        """Check if we can send a message (rate limiting)."""
-        now = datetime.now()
-        
-        # Remove timestamps older than 1 minute
-        while self.message_timestamps and (now - self.message_timestamps[0]) > timedelta(minutes=1):
-            self.message_timestamps.popleft()
-        
-        return len(self.message_timestamps) < self.max_messages_per_minute
-    
-    def _track_sent_message(self) -> None:
-        """Track that a message was sent (for rate limiting)."""
-        self.message_timestamps.append(datetime.now())
 
 
 class ChannelRSSWorkerService:

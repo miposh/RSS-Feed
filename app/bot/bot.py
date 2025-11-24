@@ -16,6 +16,7 @@ from app.bot.dialogs.flows import dialogs
 from app.bot.handlers import routers
 from app.services.channel_rss_worker import ChannelRSSWorkerService
 from app.services.cleanup_service import CleanupService
+from app.services.message_queue import start_message_queue, stop_message_queue
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,8 +44,12 @@ logger = logging.getLogger(__name__)
 #     logger.info("Bot commands have been set successfully")
 
 async def on_startup(bot: Bot, db_pool) -> tuple[ChannelRSSWorkerService, CleanupService]:
-    logger.info("Bot is starting...") 
-    
+    logger.info("Bot is starting...")
+
+    # Start the message queue (must start before workers)
+    await start_message_queue()
+    logger.info("Message queue started")
+
     # Start the channel-based RSS worker service (new)
     channel_worker_service = ChannelRSSWorkerService(bot, db_pool)
     await channel_worker_service.start()
@@ -52,20 +57,24 @@ async def on_startup(bot: Bot, db_pool) -> tuple[ChannelRSSWorkerService, Cleanu
     # Start cleanup service
     cleanup_service = CleanupService(db_pool)
     await cleanup_service.start()
-    
+
     logger.info("Bot started successfully")
     return channel_worker_service, cleanup_service
 
 
 async def on_shutdown(bot: Bot, channel_worker_service=None, cleanup_service=None, db_pool=None) -> None:
     logger.info("Bot is shutting down...")
-    
+
     if channel_worker_service:
         await channel_worker_service.stop()
 
     if cleanup_service:
         await cleanup_service.stop()
-    
+
+    # Stop message queue (after workers)
+    await stop_message_queue()
+    logger.info("Message queue stopped")
+
     if db_pool:
         await db_pool.close()
         logger.info("Database pool closed")
