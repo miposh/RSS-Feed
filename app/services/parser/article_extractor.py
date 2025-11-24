@@ -4,9 +4,10 @@ Fetches full article content from URLs and extracts clean text.
 """
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, List
 
 from scraperapi_sdk import ScraperAPIClient
+from scraperapi_sdk.exceptions import ScraperAPIException
 from newspaper import Article, ArticleException
 from config.config import get_config
 
@@ -33,35 +34,35 @@ class ArticleExtractor:
         else:
             logger.info("ArticleExtractor работает без ScraperAPI")
     
-    async def extract_article_text(self, url: str) -> Optional[str]:
+    async def extract_article_content(self, url: str) -> tuple[Optional[str], List[str]]:
         """
-        Extract article text from URL using ScraperAPI and newspaper4k.
+        Extract article text and images from URL using ScraperAPI and newspaper4k.
         
         Args:
             url: The article URL to fetch and parse
             
         Returns:
-            Extracted article text or None if extraction failed
+            Tuple of (text, image_urls). elements can be None or empty list.
         """
         try:
             # Fetch HTML content
             html_content = await self._fetch_html(url)
             if not html_content:
                 logger.warning(f"Не удалось получить HTML для {url}")
-                return None
+                return None, []
             
             # Parse article with newspaper4k
-            article_text = self._parse_article(html_content, url)
-            if not article_text:
+            text, images = self._parse_article(html_content, url)
+            if not text:
                 logger.warning(f"Не удалось извлечь текст статьи для {url}")
-                return None
+                return None, images
             
-            logger.info(f"Успешно извлечен текст статьи ({len(article_text)} символов) для {url}")
-            return article_text
+            logger.info(f"Успешно извлечен текст ({len(text)} символов) и {len(images)} картинка (top_image) для {url}")
+            return text, images
             
         except Exception as e:
             logger.error(f"Ошибка извлечения статьи {url}: {e}", exc_info=True)
-            return None
+            return None, []
     
     async def _fetch_html(self, url: str) -> Optional[str]:
         """
@@ -91,15 +92,20 @@ class ArticleExtractor:
             else:
                 # Fallback to newspaper4k's built-in download
                 logger.debug(f"Загрузка напрямую (без ScraperAPI): {url}")
+                
                 article = Article(url, language='ru')
-                article.download()
+                
+                # Run synchronous download in executor to avoid blocking event loop
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, article.download)
+                
                 return article.html
                 
         except Exception as e:
             logger.error(f"Ошибка загрузки HTML {url}: {e}", exc_info=True)
             return None
     
-    def _parse_article(self, html: str, url: str) -> Optional[str]:
+    def _parse_article(self, html: str, url: str) -> tuple[Optional[str], List[str]]:
         """
         Parse article from HTML using newspaper4k.
         
@@ -108,7 +114,7 @@ class ArticleExtractor:
             url: Original article URL
             
         Returns:
-            Extracted article text or None if parsing failed
+            Tuple (text, list_of_image_urls)
         """
         try:
             # Create Article object with HTML
@@ -121,19 +127,21 @@ class ArticleExtractor:
             # Parse the article
             article.parse()
             
-            # Get the article text
-            if article.text:
-                return article.text.strip()
-            else:
-                logger.warning(f"newspaper4k не смог извлечь текст из {url}")
-                return None
+            text = article.text.strip() if article.text else None
+
+            # Extract only top_image if available
+            images = []
+            if article.top_image:
+                images.append(article.top_image)
+
+            return text, images
                 
         except ArticleException as e:
             logger.error(f"Ошибка парсинга статьи newspaper4k для {url}: {e}")
-            return None
+            return None, []
         except Exception as e:
             logger.error(f"Неожиданная ошибка парсинга для {url}: {e}", exc_info=True)
-            return None
+            return None, []
 
 
 # Global instance
@@ -148,16 +156,16 @@ def get_article_extractor() -> ArticleExtractor:
     return _article_extractor
 
 
-async def extract_article_content(url: str, api_key: Optional[str] = None) -> Optional[str]:
+async def extract_article_content(url: str, api_key: Optional[str] = None) -> tuple[Optional[str], List[str]]:
     """
-    Convenience function to extract article content from URL.
+    Convenience function to extract article content and images from URL.
     
     Args:
         url: The article URL to fetch and parse
         api_key: Optional custom ScraperAPI key (uses global config if None)
         
     Returns:
-        Extracted article text or None if extraction failed
+        Tuple (text, image_urls)
     """
     if api_key:
         # Create a temporary extractor with custom API key
@@ -174,7 +182,7 @@ async def extract_article_content(url: str, api_key: Optional[str] = None) -> Op
             
             if not html_content:
                 logger.warning(f"ScraperAPI вернул пустой ответ для {url}")
-                return None
+                return None, []
             
             # Parse with newspaper4k
             from newspaper import Article
@@ -183,17 +191,31 @@ async def extract_article_content(url: str, api_key: Optional[str] = None) -> Op
             article.html = html_content
             article.parse()
             
-            if article.text:
-                logger.info(f"Успешно извлечен текст статьи ({len(article.text)} символов) для {url} с custom API key")
-                return article.text.strip()
+            text = article.text.strip() if article.text else None
+
+            # Extract only top_image if available
+            images = []
+            if article.top_image:
+                images.append(article.top_image)
+
+            if text:
+                logger.info(f"Успешно извлечен текст ({len(text)} символов) для {url} с custom API key")
+                return text, images
             else:
                 logger.warning(f"newspaper4k не смог извлечь текст из {url}")
-                return None
-                
+                return None, images
+        
+        except ScraperAPIException as e:
+            if "403" in str(e) or "Forbidden" in str(e):
+                logger.warning(f"ScraperAPI Forbidden (403) for {url} with custom key. Check API key.")
+            else:
+                logger.warning(f"ScraperAPI error for {url}: {e}")
+            return None, []
+            
         except Exception as e:
             logger.error(f"Ошибка извлечения статьи с custom API key {url}: {e}", exc_info=True)
-            return None
+            return None, []
     else:
         # Use global extractor
         extractor = get_article_extractor()
-        return await extractor.extract_article_text(url)
+        return await extractor.extract_article_content(url)

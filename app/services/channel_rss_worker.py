@@ -7,6 +7,7 @@ from collections import deque
 from typing import Dict, Deque, Optional
 
 from aiogram import Bot
+from aiogram.types import InputMediaPhoto
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from psycopg_pool import AsyncConnectionPool
 
@@ -148,19 +149,25 @@ class ChannelRSSWorker:
             f"Checking {len(to_process)} feeds for channel {self.channel.channel_id} ({self.channel.title})"
         )
         
-        for subscription, feed in to_process:
-            try:
-                await self._process_feed(
-                    feed_id=feed.id,
-                    feed_url=feed.url,
-                    last_modified=feed.last_modified,
-                    etag=feed.etag,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error processing subscription {subscription.id} for channel {self.channel.channel_id}: {e}",
-                    exc_info=True
-                )
+        # Process feeds concurrently with a limit
+        semaphore = asyncio.Semaphore(5)  # Process max 5 feeds at once per channel
+
+        async def process_with_semaphore(sub, fd):
+            async with semaphore:
+                try:
+                    await self._process_feed(
+                        feed_id=fd.id,
+                        feed_url=fd.url,
+                        last_modified=fd.last_modified,
+                        etag=fd.etag,
+                    )
+                except Exception as e:
+                     logger.error(
+                        f"Error processing subscription {sub.id} for channel {self.channel.channel_id}: {e}",
+                        exc_info=True
+                    )
+
+        await asyncio.gather(*(process_with_semaphore(sub, feed) for sub, feed in to_process))
     
     async def _process_feed(
         self,
@@ -199,34 +206,46 @@ class ChannelRSSWorker:
                 logger.debug(f"No posts in feed {feed_url}")
                 return
             
-            for post in posts:
-                # Skip news older than 1 hour
-                if post.published_time:
-                    utc_plus_3 = timezone(timedelta(hours=3))
-                    now = datetime.now(utc_plus_3)
-                    one_hour_ago = now - timedelta(hours=1)
+            # Identify new posts and filter out already sent ones
+            new_posts = []
+            
+            async with self.db_pool.connection() as raw_connection:
+                async with raw_connection.transaction():
+                    connection = PsycopgConnection(raw_connection)
+                    db = DB(connection)
                     
-                    if post.published_time < one_hour_ago:
-                        logger.debug(
-                            f"Skipping old news (>1h): {post.title[:50]} "
-                            f"(published {post.published_time.strftime('%Y-%m-%d %H:%M')})"
-                        )
-                        continue
-                
-                # Check if post was already sent
-                async with self.db_pool.connection() as raw_connection:
-                    async with raw_connection.transaction():
-                        connection = PsycopgConnection(raw_connection)
-                        db = DB(connection)
+                    for post in posts:
                         existing_post = await db.rss_posts.get_post_by_guid(
                             feed_id=feed_id,
                             guid=post.guid,
                         )
+                        
+                        if existing_post and existing_post.is_sent:
+                            continue
+                        
+                        new_posts.append(post)
+            
+            if not new_posts:
+                logger.debug(f"No new posts for channel {self.channel.channel_id}")
+                return
 
-                if existing_post and existing_post.is_sent:
-                    logger.debug(f"Skipping already sent post: {post.title[:50]}")
-                    continue
-                
+            # Sort by published time (newest first)
+            new_posts.sort(
+                key=lambda p: p.published_time or datetime.min.replace(tzinfo=timezone.utc), 
+                reverse=True
+            )
+            
+            # Take top 3 to send, mark the rest as read
+            posts_to_send = new_posts[:3]
+            posts_to_mark = new_posts[3:]
+            
+            if posts_to_mark:
+                logger.info(f"Marking {len(posts_to_mark)} old posts as read (limit 3)")
+                for post in posts_to_mark:
+                    await self._save_and_mark_post(feed_id=feed_id, post=post)
+            
+            # Process posts to send (oldest first to maintain chronological order in chat)
+            for post in reversed(posts_to_send):
                 await self._process_post(post, feed_id)
                 
                 # Add random delay between posts (10-15 seconds)
@@ -263,31 +282,73 @@ class ChannelRSSWorker:
         if scraper_enabled and scraper_api_key and post.link:
             try:
                 logger.debug(f"Extracting full article text: {post.link}")
-                full_article_text = await extract_article_content(
+                full_article_text, article_images = await extract_article_content(
                     post.link,
                     api_key=scraper_api_key
                 )
+                
                 if full_article_text:
                     # Replace content with full article text
                     post.content = full_article_text
                     logger.info(f"Successfully extracted full text ({len(full_article_text)} chars)")
                 else:
                     logger.warning("Failed to extract full text, using RSS content")
+                
+                # Use only the extracted top_image if available
+                if article_images:
+                    post.image_urls = [article_images[0]]
+                    logger.info("Using top_image from article")
+                else:
+                    post.image_urls = []
+
             except Exception as e:
                 logger.error(f"Error extracting article: {e}", exc_info=True)
-        
-        message = await self._format_post_message(post)
+
+        # Prepare message
+        message = await self._format_post_message(post, include_hidden_link=(len(post.image_urls) == 1))
         
         if not self._can_send_message():
             logger.warning(f"Rate limit exceeded for channel {self.channel.channel_id}")
             await asyncio.sleep(60)  # Wait a minute before retrying
         
         try:
-            await self.bot.send_message(
-                chat_id=self.channel.channel_id,
-                text=message,
-                disable_web_page_preview=False
-            )
+            # Send as Album if multiple images
+            if len(post.image_urls) > 1:
+                # Telegram allows max 10 items in media group
+                media_group = []
+                for i, url in enumerate(post.image_urls[:10]):
+                    media = InputMediaPhoto(media=url)
+                    # Add caption to the first item if it fits
+                    if i == 0 and len(message) <= 1024:
+                        media.caption = message
+                        media.parse_mode = "HTML"
+                    media_group.append(media)
+                
+                # If message was too long for caption, send it separately first
+                if len(message) > 1024:
+                    await self.bot.send_message(
+                        chat_id=self.channel.channel_id,
+                        text=message,
+                        disable_web_page_preview=False
+                    )
+                    # Send album without caption
+                    await self.bot.send_media_group(
+                        chat_id=self.channel.channel_id,
+                        media=media_group
+                    )
+                else:
+                    # Send album with caption
+                    await self.bot.send_media_group(
+                        chat_id=self.channel.channel_id,
+                        media=media_group
+                    )
+            else:
+                # Send as normal message (hidden link will handle the single image)
+                await self.bot.send_message(
+                    chat_id=self.channel.channel_id,
+                    text=message,
+                    disable_web_page_preview=False
+                )
             
             self._track_sent_message()
             logger.info(
@@ -317,7 +378,7 @@ class ChannelRSSWorker:
     async def _save_and_mark_post(
         self,
         feed_id: int,
-        post: RSSPost,
+        post: RSSPost
     ) -> None:
         """Save post to database and mark it as sent."""
         try:
@@ -325,33 +386,37 @@ class ChannelRSSWorker:
                 async with raw_connection.transaction():
                     connection = PsycopgConnection(raw_connection)
                     db = DB(connection)
-
-                    # Save post to database if it doesn't exist
-                    existing_post = await db.rss_posts.get_post_by_guid(
+                    
+                    # Add post to database
+                    post_model = await db.rss_posts.add(
                         feed_id=feed_id,
                         guid=post.guid,
+                        link=post.link,
+                        title=post.title,
+                        summary=post.summary,
+                        content_html=post.content,
+                        author=post.author,
+                        published_at=post.published_time,
+                        media_urls={"images": post.image_urls} if post.image_urls else None,
                     )
-                    if not existing_post:
-                        saved_post = await db.rss_posts.add(
+                    
+                    if not post_model:
+                        # Post already exists, get it
+                        post_model = await db.rss_posts.get_post_by_guid(
                             feed_id=feed_id,
-                            guid=post.guid,
-                            link=post.link,
-                            title=post.title,
-                            summary=post.summary,
-                            content_html=post.content,
-                            author=post.author,
-                            published_at=post.published_time,
+                            guid=post.guid
                         )
-                        if saved_post:
-                            await db.rss_posts.mark_as_sent(post_id=saved_post.id)
-                            logger.debug(f"Post saved and marked as sent: {post.title[:50]}")
+                    
+                    if post_model:
+                        await db.rss_posts.mark_as_sent(post_id=post_model.id)
+                        logger.debug(f"Marked post as sent: {post.title[:50]}")
                     else:
-                        await db.rss_posts.mark_as_sent(post_id=existing_post.id)
-                        logger.debug(f"Existing post marked as sent: {post.title[:50]}")
+                        logger.error(f"Failed to save/retrieve post: {post.guid}")
+                        
         except Exception as e:
-            logger.error(f"Error marking post as sent: {e}", exc_info=True)
+            logger.error(f"Error saving post {post.guid}: {e}", exc_info=True)
     
-    async def _format_post_message(self, post: RSSPost) -> str:
+    async def _format_post_message(self, post: RSSPost, include_hidden_link: bool = False) -> str:
         """Format post message for Telegram."""
         def clean_html(text: str) -> str:
             if not text:
@@ -365,7 +430,13 @@ class ChannelRSSWorker:
             text = re.sub(r'\s+', ' ', text)
             return text.strip()
         
-        message = f"<b>{clean_html(post.title)}</b>\n\n"
+        message = ""
+        
+        # Add hidden link for image preview if available and requested
+        if include_hidden_link and post.image_urls:
+            message += f"<a href='{post.image_urls[0]}'>&#8203;</a>"
+        
+        message += f"<b>{clean_html(post.title)}</b>\n\n"
         
         # Use content if available, otherwise fall back to summary
         text_to_use = post.content if post.content else post.summary

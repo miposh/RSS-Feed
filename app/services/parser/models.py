@@ -1,9 +1,9 @@
 """
 Models for RSS parsing (not database models).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 
 @dataclass
@@ -15,4 +15,5 @@ class RSSPost:
     summary: str = ""
     content: str = ""
     author: Optional[str] = None
+    image_urls: List[str] = field(default_factory=list)
     published_time: Optional[datetime] = None

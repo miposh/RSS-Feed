@@ -116,3 +116,19 @@ class RSSPostsTable(BaseTable):
         posts = data.to_models(model=RSSPostModel)
         self._log(RSSPostsTableAction.GET_POSTS_BY_FEED, feed_id=feed_id, count=len(data) if data else 0)
         return posts
+
+    async def delete_older_than(self, *, days: int) -> int:
+        data: SingleQueryResult = await self.connection.fetchone(
+            sql="""
+                WITH deleted AS (
+                    DELETE FROM rss_posts
+                    WHERE created_at < NOW() - make_interval(days := %s)
+                    RETURNING id
+                )
+                SELECT count(*) as count FROM deleted;
+            """,
+            params=(days,),
+        )
+        count = data.result["count"] if data.result else 0
+        logger.info(f"Deleted {count} old posts (older than {days} days)")
+        return count

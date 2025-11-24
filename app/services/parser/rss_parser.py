@@ -96,7 +96,10 @@ class RSSParser:
         
         # Извлекаем автора
         author = RSSParser._extract_author(entry)
-        
+
+        # Не извлекаем изображения из RSS - только через scraper
+        image_urls = []
+
         published_time = RSSParser._parse_published_time(entry)
         
         return RSSPost(
@@ -106,6 +109,7 @@ class RSSParser:
             summary=summary,
             content=content,
             author=author,
+            image_urls=image_urls,
             published_time=published_time
         )
     
