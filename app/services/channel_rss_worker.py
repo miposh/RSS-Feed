@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from aiogram import Bot
-from aiogram.types import URLInputFile
+from aiogram.types import BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from psycopg_pool import AsyncConnectionPool
 
@@ -303,16 +303,31 @@ class ChannelRSSWorker:
         # Prepare message/caption
         message = await self._format_post_message(post, include_hidden_link=False)
 
+        # Pre-download image if available (to use browser User-Agent and avoid 403)
+        image_data = None
+        if image_url:
+            try:
+                async with get_http_client() as http_client:
+                    content, status, error = await http_client.fetch(image_url, use_cache=False, verify_ssl=False)
+                    if status == 200 and content:
+                        # Extract filename from URL for Telegram
+                        filename = image_url.split('/')[-1].split('?')[0] or 'image.jpg'
+                        image_data = BufferedInputFile(content, filename=filename)
+                    else:
+                        logger.warning(f"Failed to download image {image_url}: {error or f'HTTP {status}'}")
+            except Exception as e:
+                logger.warning(f"Error downloading image {image_url}: {e}")
+
         # Create async function to send the message
         async def send_message():
             try:
-                if image_url:
+                if image_data:
                     # Send as photo with caption (max 1024 chars for caption)
                     caption = message[:1024] if len(message) > 1024 else message
                     
                     await self.bot.send_photo(
                         chat_id=self.channel.channel_id,
-                        photo=URLInputFile(image_url),
+                        photo=image_data,
                         caption=caption,
                         parse_mode="HTML",
                         show_caption_above_media=False
@@ -403,16 +418,28 @@ class ChannelRSSWorker:
     async def _format_post_message(self, post: RSSPost, include_hidden_link: bool = False) -> str:
         """Format post message for Telegram."""
         def clean_html(text: str) -> str:
+            """Remove HTML tags and decode entities."""
             if not text:
                 return ""
+            # Decode HTML entities first
             text = text.replace('&amp;', '&')
             text = text.replace('&lt;', '<')
             text = text.replace('&gt;', '>')
             text = text.replace('&quot;', '"')
             text = text.replace('&nbsp;', ' ')
+            # Remove all HTML tags
             text = re.sub(r'<[^>]+>', '', text)
             text = re.sub(r'\s+', ' ', text)
             return text.strip()
+        
+        def escape_html(text: str) -> str:
+            """Escape special HTML characters for Telegram."""
+            if not text:
+                return ""
+            text = text.replace('&', '&amp;')
+            text = text.replace('<', '&lt;')
+            text = text.replace('>', '&gt;')
+            return text
         
         message = ""
         
@@ -420,13 +447,16 @@ class ChannelRSSWorker:
         if include_hidden_link and post.image_urls:
             message += f"<a href='{post.image_urls[0]}'>&#8203;</a>"
         
-        message += f"<b>{clean_html(post.title)}</b>\n\n"
+        # Clean and escape title
+        title = escape_html(clean_html(post.title))
+        message += f"<b>{title}</b>\n\n"
         
         # Use content if available, otherwise fall back to summary
         text_to_use = post.content if post.content else post.summary
         
         if text_to_use:
-            clean_text = clean_html(text_to_use)
+            # Clean HTML tags, then escape special chars
+            clean_text = escape_html(clean_html(text_to_use))
             
             # Limit to 4080 characters
             max_text_length = 4080

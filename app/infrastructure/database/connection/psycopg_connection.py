@@ -20,9 +20,11 @@ class PsycopgConnection(BaseConnection):
         sql: str,
         params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
         connection: Any | None = None,
-    ) -> None:
+    ) -> int:
+        """Execute SQL and return number of affected rows."""
         async with self._connection.cursor() as cur:
             await cur.execute(sql, params)
+            return cur.rowcount
 
     async def fetchone(
         self,
