@@ -1,6 +1,8 @@
 import logging
 import asyncio
 
+from psycopg import errors as pg_errors
+
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
 from app.infrastructure.database.db import DB
 from config.config import get_config
@@ -64,5 +66,10 @@ class CleanupService:
                     count = await db.rss_posts.delete_older_than(days=days)
                     logger.info(f"Cleanup completed. Removed {count} old posts.")
                     
+        except pg_errors.UndefinedTable:
+            logger.warning(
+                "Table 'rss_posts' does not exist. "
+                "Please run migrations: python apply_migrations.py"
+            )
         except Exception as e:
             logger.error(f"Failed to cleanup old posts: {e}", exc_info=True)

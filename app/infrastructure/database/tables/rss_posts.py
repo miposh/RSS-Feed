@@ -129,6 +129,6 @@ class RSSPostsTable(BaseTable):
             """,
             params=(days,),
         )
-        count = data.result["count"] if data.result else 0
+        count = data.data.get("count", 0) if data.data else 0
         logger.info(f"Deleted {count} old posts (older than {days} days)")
         return count

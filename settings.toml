@@ -14,7 +14,7 @@ parse_mode = "HTML"
 
 [default.postgres]
 name = "rss"
-host = "95.181.167.217"
+host = "144.31.246.5"
 port = 5405
 user = "polyana"
 

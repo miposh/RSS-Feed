@@ -16,9 +16,14 @@ chat_member_router = Router()
 async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> None:
     chat = event.chat
     
-    logger.info(f"my_chat_member event: chat_type={chat.type}, chat_id={chat.id}, from_user={event.from_user.id}")
+    logger.info(
+        f"my_chat_member event received: chat_type={chat.type}, chat_id={chat.id}, "
+        f"from_user={event.from_user.id}, old_status={event.old_chat_member.status}, "
+        f"new_status={event.new_chat_member.status}"
+    )
     
-    if chat.type not in ["group", "supergroup"]:
+    if chat.type not in ["group", "supergroup", "channel"]:
+        logger.info(f"Skipping chat type: {chat.type}")
         return
     
     new_status = event.new_chat_member

@@ -7,7 +7,7 @@ httpx
 scraperapi-sdk
 newspaper4k
 Brotli
-lxml_html_clean
+lxml-html-clean
 psycopg
 pydantic
 asyncpg

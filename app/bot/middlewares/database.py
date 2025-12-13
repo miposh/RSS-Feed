@@ -25,12 +25,7 @@ class DataBaseMiddleware(BaseMiddleware):
             raise RuntimeError("Missing db_pool in middleware context.")
 
         async with db_pool.connection() as raw_connection:
-            try:
-                async with raw_connection.transaction():
-                    connection = PsycopgConnection(raw_connection)
-                    data["db"] = DB(connection)
-                    return await handler(event, data)
-                    
-            except Exception as e:
-                logger.exception("Transaction rolled back due to error: %s", e)
-                raise
+            async with raw_connection.transaction():
+                connection = PsycopgConnection(raw_connection)
+                data["db"] = DB(connection)
+                return await handler(event, data)

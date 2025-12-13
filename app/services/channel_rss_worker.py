@@ -8,6 +8,7 @@ from aiogram import Bot
 from aiogram.types import BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from psycopg_pool import AsyncConnectionPool
+from psycopg import errors as pg_errors
 
 from app.infrastructure.database.db import DB
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
@@ -104,6 +105,11 @@ class ChannelRSSWorker:
         while self.running:
             try:
                 await self._check_channel_feeds()
+            except pg_errors.UndefinedTable as e:
+                logger.warning(
+                    f"Database table missing for channel {self.channel.channel_id}. "
+                    f"Please run migrations: python apply_migrations.py. Error: {e}"
+                )
             except Exception as e:
                 logger.error(
                     f"Error checking feeds for channel {self.channel.channel_id}: {e}",
@@ -412,6 +418,11 @@ class ChannelRSSWorker:
                     else:
                         logger.error(f"Failed to save/retrieve post: {post.guid}")
                         
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot save post {post.guid}: table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
         except Exception as e:
             logger.error(f"Error saving post {post.guid}: {e}", exc_info=True)
     
@@ -570,6 +581,11 @@ class ChannelRSSWorkerService:
                         await worker.stop()
                         logger.info(f"Stopped worker for disabled channel {channel_id}")
         
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot sync workers: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
         except Exception as e:
             logger.error(f"Error syncing workers: {e}", exc_info=True)
     
@@ -609,5 +625,10 @@ class ChannelRSSWorkerService:
                             worker = self.workers.pop(channel_id)
                             await worker.stop()
         
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot reload channel {channel_id}: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
         except Exception as e:
             logger.error(f"Error reloading channel {channel_id}: {e}", exc_info=True)

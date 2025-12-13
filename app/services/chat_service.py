@@ -2,6 +2,8 @@ import logging
 from typing import Optional
 from aiogram.types import Chat
 
+from psycopg import errors as pg_errors
+
 from app.infrastructure.database.db import DB
 from app.infrastructure.database.models.channel import ChannelModel
 from app.infrastructure.database.models.rss_feed import RSSFeedModel
@@ -24,6 +26,12 @@ class ChatService:
                 username=chat.username
             )
             return result is not None
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot register chat {chat.id}: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
+            return False
         except Exception as e:
             logger.error(f"Error registering chat {chat.id}: {e}", exc_info=True)
             return False
@@ -52,6 +60,12 @@ class ChatService:
                 channel_id=channel.id
             )
             return subscription is not None
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot add feed to chat: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
+            return False
         except Exception as e:
             logger.error(f"Error adding feed to chat: {e}", exc_info=True)
             return False
@@ -82,6 +96,12 @@ class ChatService:
             logger.info(f"Deleted feed {feed_url} (id={feed.id}) from channel {channel_id}")
 
             return True
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot remove feed from chat: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
+            return False
         except Exception as e:
             logger.error(f"Error removing feed from chat: {e}", exc_info=True)
             return False
@@ -111,6 +131,12 @@ class ChatService:
                     feeds.append(feed)
             
             return feeds
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot get chat feeds: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
+            return []
         except Exception as e:
             logger.error(f"Error getting chat feeds: {e}", exc_info=True)
             return []
@@ -119,6 +145,12 @@ class ChatService:
         """Get channel by Telegram channel_id."""
         try:
             return await self.db.channels.get_channel(channel_id=channel_id)
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot get channel {channel_id}: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
+            return None
         except Exception as e:
             logger.error(f"Error getting channel {channel_id}: {e}", exc_info=True)
             return None

@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -6,7 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram_dialog import setup_dialogs
 
-from config.config import get_config
+from config.config import get_config, LogsConfig
 from app.infrastructure.database.connection.connect_to_pg import get_pg_pool
 from app.bot.middlewares.chat_type_middleware import ChatTypeMiddleware
 from app.bot.middlewares.error_middleware import ErrorHandlingMiddleware
@@ -18,10 +19,27 @@ from app.services.channel_rss_worker import ChannelRSSWorkerService
 from app.services.cleanup_service import CleanupService
 from app.services.message_queue import start_message_queue, stop_message_queue
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+
+def setup_logging(logs_config: LogsConfig) -> None:
+    """Configure logging based on config settings."""
+    level = getattr(logging, logs_config.level_name.upper(), logging.INFO)
+    
+    logging.basicConfig(
+        level=level,
+        format=logs_config.format,
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+        ],
+        force=True,
+    )
+    
+    logging.getLogger("aiogram").setLevel(level)
+    logging.getLogger("aiogram_dialog").setLevel(level)
+    logging.getLogger("psycopg").setLevel(logging.WARNING)
+    logging.getLogger("psycopg_pool").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +99,15 @@ async def on_shutdown(bot: Bot, channel_worker_service=None, cleanup_service=Non
 
 async def start_polling(dp: Dispatcher, bot: Bot) -> None:
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    allowed_updates = dp.resolve_used_update_types()
+    logger.info(f"Starting polling with allowed_updates: {allowed_updates}")
+    await dp.start_polling(bot, allowed_updates=allowed_updates)
 
 async def main() -> None:
     config = get_config()
+    
+    setup_logging(config.logs)
+    logger.info(f"Logging configured: level={config.logs.level_name}")
     
     bot = Bot(
         token=config.bot.token,
