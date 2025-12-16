@@ -5,6 +5,7 @@ dynaconf
 feedparser
 httpx
 scraperapi-sdk
+botasaurus
 newspaper4k
 Brotli
 lxml-html-clean

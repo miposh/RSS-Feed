@@ -210,11 +210,11 @@ async def on_source_selected(
         return
     
     try:
-        # item_id is the feed URL
+        # item_id is the feed ID (not URL, to avoid BUTTON_DATA_INVALID)
         chat_service = ChatService(db)
-        success = await chat_service.remove_feed_from_chat(
+        success = await chat_service.remove_feed_by_id(
             channel_id=int(selected_channel_id),
-            feed_url=item_id
+            feed_id=int(item_id)
         )
         
         if success:
