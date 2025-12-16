@@ -58,7 +58,7 @@ class ChannelsTable(BaseTable):
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
                 SELECT id, channel_id, username, title, parsing_is_enabled, 
-                       interval_time, scraper_is_enabled, scraper_api_key, created_at
+                       interval_time, scraper_is_enabled, scraper_type, scraper_api_key, created_at
                 FROM channels
                 WHERE channel_id = %s
             """,
@@ -73,7 +73,7 @@ class ChannelsTable(BaseTable):
         data: SingleQueryResult = await self.connection.fetchone(
             sql="""
                 SELECT id, channel_id, username, title, parsing_is_enabled, 
-                       interval_time, scraper_is_enabled, scraper_api_key, created_at
+                       interval_time, scraper_is_enabled, scraper_type, scraper_api_key, created_at
                 FROM channels
                 WHERE id = %s
             """,
@@ -111,7 +111,7 @@ class ChannelsTable(BaseTable):
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
                 SELECT id, channel_id, username, title, parsing_is_enabled, 
-                       interval_time, scraper_is_enabled, scraper_api_key, created_at
+                       interval_time, scraper_is_enabled, scraper_type, scraper_api_key, created_at
                 FROM channels
                 ORDER BY created_at DESC
             """,
@@ -210,12 +210,27 @@ class ChannelsTable(BaseTable):
         self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, scraper_api_key=api_key)
         return channel_model
 
+    async def update_scraper_type(self, *, channel_id: int, scraper_type: str) -> ChannelModel | None:
+        """Update scraper type for a channel."""
+        data: SingleQueryResult = await self.connection.update_and_fetchone(
+            sql="""
+                UPDATE channels
+                SET scraper_type = %s
+                WHERE channel_id = %s
+                RETURNING *;
+            """,
+            params=(scraper_type, channel_id),
+        )
+        channel_model = data.to_model(model=ChannelModel, raise_if_empty=True)
+        self._log(ChannelsTableAction.UPDATE_CHANNEL, channel_id=channel_id, scraper_type=scraper_type)
+        return channel_model
+
     async def get_channels_with_parsing_enabled(self) -> list[ChannelModel] | None:
         """Get all channels with parsing enabled."""
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
                 SELECT id, channel_id, username, title, parsing_is_enabled, 
-                       interval_time, scraper_is_enabled, scraper_api_key, created_at
+                       interval_time, scraper_is_enabled, scraper_type, scraper_api_key, created_at
                 FROM channels
                 WHERE parsing_is_enabled = TRUE
                 ORDER BY created_at DESC

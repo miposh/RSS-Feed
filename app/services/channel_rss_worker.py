@@ -77,6 +77,7 @@ class ChannelRSSWorker:
         """Update worker settings and restart if necessary."""
         old_interval = self.channel.interval_time
         old_scraper = self.channel.scraper_is_enabled
+        old_scraper_type = self.channel.scraper_type
         old_api_key = self.channel.scraper_api_key
         
         self.channel = channel
@@ -85,6 +86,7 @@ class ChannelRSSWorker:
         settings_changed = (
             old_interval != channel.interval_time or
             old_scraper != channel.scraper_is_enabled or
+            old_scraper_type != channel.scraper_type or
             old_api_key != channel.scraper_api_key
         )
         
@@ -276,13 +278,15 @@ class ChannelRSSWorker:
         """Process and send a single post to the channel."""
         # Extract full article content if scraper is enabled for this channel
         scraper_enabled = self.channel.scraper_is_enabled
+        scraper_type = self.channel.scraper_type
         scraper_api_key = self.channel.scraper_api_key
         
-        if scraper_enabled and scraper_api_key and post.link:
+        if scraper_enabled and post.link:
             try:
                 logger.debug(f"Extracting full article text: {post.link}")
                 full_article_text, article_images = await extract_article_content(
                     post.link,
+                    scraper_type=scraper_type,
                     api_key=scraper_api_key
                 )
                 

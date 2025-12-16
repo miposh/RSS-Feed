@@ -25,9 +25,9 @@ class HTTPClient:
         self.max_connections = 100
         self.max_connections_per_domain = 10
         self.timeout = httpx.Timeout(
-            30.0,  # default timeout
-            connect=5.0,
-            read=10.0
+            60.0,  # default timeout
+            connect=10.0,
+            read=30.0
         )
         self.max_retries = 3
         self.base_backoff = 1.0

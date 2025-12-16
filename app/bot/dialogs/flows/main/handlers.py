@@ -281,6 +281,61 @@ async def on_set_api_key_clicked(
     await dialog_manager.switch_to(MainSG.set_scraper_api_key)
 
 
+async def on_set_scraper_type_clicked(
+    callback: CallbackQuery,
+    widget: Any,
+    dialog_manager: DialogManager,
+) -> None:
+    """Handle set scraper type button click."""
+    await dialog_manager.switch_to(MainSG.set_scraper_type)
+
+
+async def on_scraper_type_selected(
+    callback: CallbackQuery,
+    widget: Any,
+    dialog_manager: DialogManager,
+    item_id: str,
+) -> None:
+    """Handle scraper type selection."""
+    db: DB = dialog_manager.middleware_data.get("db")
+    selected_channel_id = dialog_manager.dialog_data.get("selected_channel_id")
+    
+    if not selected_channel_id:
+        await callback.answer("❌ Ошибка: группа не выбрана")
+        return
+    
+    try:
+        # If selecting scraperapi, check if API key is set
+        if item_id == "scraperapi":
+            channel = await db.channels.get_channel(channel_id=int(selected_channel_id))
+            if channel and not channel.scraper_api_key:
+                # Store pending scraper type change
+                dialog_manager.dialog_data["pending_scraper_type"] = item_id
+                await callback.answer("⚠️ Для ScraperAPI требуется API ключ")
+                await dialog_manager.switch_to(MainSG.set_scraper_api_key)
+                return
+        
+        channel = await db.channels.update_scraper_type(
+            channel_id=int(selected_channel_id),
+            scraper_type=item_id
+        )
+        
+        if channel:
+            type_names = {
+                "scraperapi": "ScraperAPI",
+                "botasaurus": "Botasaurus",
+            }
+            type_name = type_names.get(item_id, item_id)
+            await callback.answer(f"✅ Тип скрапера: {type_name}")
+            # Reload the worker with new settings
+            await _reload_channel_worker(dialog_manager, int(selected_channel_id))
+            await dialog_manager.switch_to(MainSG.channel_settings)
+        else:
+            await callback.answer("❌ Не удалось изменить тип скрапера")
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {str(e)}")
+
+
 async def on_back_to_settings(
     callback: CallbackQuery,
     widget: Any,
@@ -395,6 +450,12 @@ async def on_api_key_input(
     if not api_key:
         api_key = None
     
+    # Check if there's a pending scraper type change that requires API key
+    pending_scraper_type = dialog_manager.dialog_data.get("pending_scraper_type")
+    if pending_scraper_type == "scraperapi" and not api_key:
+        await message.answer("❌ Для ScraperAPI требуется API ключ. Введите ключ или выберите другой тип скрапера.")
+        return
+    
     try:
         channel = await db.channels.update_scraper_api_key(
             channel_id=int(selected_channel_id),
@@ -402,10 +463,19 @@ async def on_api_key_input(
         )
         
         if channel:
-            if api_key:
+            # Apply pending scraper type change if exists
+            if pending_scraper_type and api_key:
+                await db.channels.update_scraper_type(
+                    channel_id=int(selected_channel_id),
+                    scraper_type=pending_scraper_type
+                )
+                dialog_manager.dialog_data.pop("pending_scraper_type", None)
+                await message.answer("✅ API ключ установлен, тип скрапера: ScraperAPI")
+            elif api_key:
                 await message.answer("✅ API ключ успешно обновлен")
             else:
-                await message.answer("✅ API ключ удален (будет использоваться глобальный)")
+                await message.answer("✅ API ключ удален")
+            
             # Reload the worker with new API key
             await _reload_channel_worker(dialog_manager, int(selected_channel_id))
             await dialog_manager.switch_to(MainSG.channel_settings)

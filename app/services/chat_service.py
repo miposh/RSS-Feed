@@ -79,6 +79,20 @@ class ChatService:
                 logger.warning(f"Feed {feed_url} not found")
                 return False
 
+            return await self.remove_feed_by_id(channel_id=channel_id, feed_id=feed.id)
+        except pg_errors.UndefinedTable as e:
+            logger.warning(
+                f"Cannot remove feed from chat: database table missing. "
+                f"Run migrations: python apply_migrations.py. Error: {e}"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"Error removing feed from chat: {e}", exc_info=True)
+            return False
+    
+    async def remove_feed_by_id(self, channel_id: int, feed_id: int) -> bool:
+        """Remove a feed subscription by feed ID and delete the feed source."""
+        try:
             # Get channel
             channel = await self.db.channels.get_channel(channel_id=channel_id)
             if not channel:
@@ -87,13 +101,13 @@ class ChatService:
 
             # Delete subscription
             await self.db.feed_subscriptions.delete(
-                feed_id=feed.id,
+                feed_id=feed_id,
                 channel_id=channel.id
             )
 
             # Delete the feed source completely
-            await self.db.rss_feeds.delete(feed_id=feed.id)
-            logger.info(f"Deleted feed {feed_url} (id={feed.id}) from channel {channel_id}")
+            await self.db.rss_feeds.delete(feed_id=feed_id)
+            logger.info(f"Deleted feed id={feed_id} from channel {channel_id}")
 
             return True
         except pg_errors.UndefinedTable as e:
@@ -103,7 +117,7 @@ class ChatService:
             )
             return False
         except Exception as e:
-            logger.error(f"Error removing feed from chat: {e}", exc_info=True)
+            logger.error(f"Error removing feed by id: {e}", exc_info=True)
             return False
     
     async def get_chat_feeds(self, channel_id: int) -> list[RSSFeedModel]:

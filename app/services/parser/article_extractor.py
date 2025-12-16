@@ -1,38 +1,50 @@
 """
-Article content extractor using ScraperAPI and newspaper4k.
+Article content extractor using configurable scrapers and newspaper4k.
 Fetches full article content from URLs and extracts clean text.
 """
-import asyncio
 import logging
 from typing import Optional, List
 
-from scraperapi_sdk import ScraperAPIClient
-from scraperapi_sdk.exceptions import ScraperAPIException
 from newspaper import Article, ArticleException
-from config.config import get_config
+
+from app.services.scrapers import BaseScraper, ScraperType, get_scraper
 
 logger = logging.getLogger(__name__)
 
 
 class ArticleExtractor:
-    """Extract article content using ScraperAPI and newspaper4k."""
+    """Extract article content using configurable scrapers and newspaper4k."""
     
-    def __init__(self):
-        """Initialize the article extractor with ScraperAPI client."""
-        config = get_config()
-        self.scraper_api_key = config.scraper.api_key
-        self.scraper_enabled = config.scraper.enabled
+    def __init__(
+        self,
+        scraper_type: ScraperType = ScraperType.BOTASAURUS,
+        api_key: Optional[str] = None
+    ):
+        """
+        Initialize the article extractor with specified scraper.
         
-        if self.scraper_enabled and not self.scraper_api_key:
-            logger.warning("ScraperAPI включен, но API ключ не найден")
-            self.scraper_enabled = False
+        Args:
+            scraper_type: Type of scraper to use
+            api_key: API key (required for ScraperAPI)
+        """
+        self.scraper_type = scraper_type
+        self.api_key = api_key
+        self._scraper: Optional[BaseScraper] = None
         
-        self.client = None
-        if self.scraper_enabled:
-            self.client = ScraperAPIClient(self.scraper_api_key)
-            logger.info("ArticleExtractor инициализирован с ScraperAPI")
-        else:
-            logger.info("ArticleExtractor работает без ScraperAPI")
+        self._init_scraper()
+    
+    def _init_scraper(self) -> None:
+        """Initialize the scraper based on type."""
+        try:
+            self._scraper = get_scraper(self.scraper_type, self.api_key)
+            if self._scraper.is_available():
+                logger.info(f"ArticleExtractor инициализирован с {self._scraper.name}")
+            else:
+                logger.warning(f"{self._scraper.name} недоступен, используется Botasaurus")
+                self._scraper = get_scraper(ScraperType.BOTASAURUS)
+        except ValueError as e:
+            logger.warning(f"Ошибка инициализации скрапера: {e}, используется Botasaurus")
+            self._scraper = get_scraper(ScraperType.BOTASAURUS)
     
     async def extract_article_content(self, url: str) -> tuple[Optional[str], List[str]]:
         """
@@ -66,7 +78,7 @@ class ArticleExtractor:
     
     async def _fetch_html(self, url: str) -> Optional[str]:
         """
-        Fetch HTML content from URL using ScraperAPI if enabled, otherwise direct request.
+        Fetch HTML content from URL using configured scraper.
         
         Args:
             url: The URL to fetch
@@ -74,36 +86,11 @@ class ArticleExtractor:
         Returns:
             HTML content as string or None if fetch failed
         """
-        try:
-            if self.scraper_enabled and self.client:
-                # Use ScraperAPI to fetch content (runs in thread pool as SDK is sync)
-                logger.debug(f"Загрузка через ScraperAPI: {url}")
-                loop = asyncio.get_event_loop()
-                html_content = await loop.run_in_executor(
-                    None, 
-                    lambda: self.client.get(url=url)
-                )
-                
-                if html_content:
-                    return html_content
-                else:
-                    logger.warning(f"ScraperAPI вернул пустой ответ для {url}")
-                    return None
-            else:
-                # Fallback to newspaper4k's built-in download
-                logger.debug(f"Загрузка напрямую (без ScraperAPI): {url}")
-                
-                article = Article(url, language='ru')
-                
-                # Run synchronous download in executor to avoid blocking event loop
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, article.download)
-                
-                return article.html
-                
-        except Exception as e:
-            logger.error(f"Ошибка загрузки HTML {url}: {e}", exc_info=True)
+        if self._scraper is None:
+            logger.error("Scraper не инициализирован")
             return None
+        
+        return await self._scraper.fetch_html(url)
     
     def _parse_article(self, html: str, url: str) -> tuple[Optional[str], List[str]]:
         """
@@ -156,66 +143,28 @@ def get_article_extractor() -> ArticleExtractor:
     return _article_extractor
 
 
-async def extract_article_content(url: str, api_key: Optional[str] = None) -> tuple[Optional[str], List[str]]:
+async def extract_article_content(
+    url: str,
+    scraper_type: ScraperType | str = ScraperType.BOTASAURUS,
+    api_key: Optional[str] = None
+) -> tuple[Optional[str], List[str]]:
     """
     Convenience function to extract article content and images from URL.
     
     Args:
         url: The article URL to fetch and parse
-        api_key: Optional custom ScraperAPI key (uses global config if None)
+        scraper_type: Type of scraper to use (ScraperType enum or string)
+        api_key: API key (required for ScraperAPI)
         
     Returns:
         Tuple (text, image_urls)
     """
-    if api_key:
-        # Create a temporary extractor with custom API key
+    if isinstance(scraper_type, str):
         try:
-            from scraperapi_sdk import ScraperAPIClient
-            client = ScraperAPIClient(api_key)
-            
-            # Fetch HTML with custom client
-            loop = asyncio.get_event_loop()
-            html_content = await loop.run_in_executor(
-                None, 
-                lambda: client.get(url=url)
-            )
-            
-            if not html_content:
-                logger.warning(f"ScraperAPI вернул пустой ответ для {url}")
-                return None, []
-            
-            # Parse with newspaper4k
-            from newspaper import Article
-            article = Article(url, language='ru')
-            article.download_state = 2  # ArticleDownloadState.SUCCESS
-            article.html = html_content
-            article.parse()
-            
-            text = article.text.strip() if article.text else None
-
-            # Extract only top_image if available
-            images = []
-            if article.top_image:
-                images.append(article.top_image)
-
-            if text:
-                logger.info(f"Успешно извлечен текст ({len(text)} символов) для {url} с custom API key")
-                return text, images
-            else:
-                logger.warning(f"newspaper4k не смог извлечь текст из {url}")
-                return None, images
-        
-        except ScraperAPIException as e:
-            if "403" in str(e) or "Forbidden" in str(e):
-                logger.warning(f"ScraperAPI Forbidden (403) for {url} with custom key. Check API key.")
-            else:
-                logger.warning(f"ScraperAPI error for {url}: {e}")
-            return None, []
-            
-        except Exception as e:
-            logger.error(f"Ошибка извлечения статьи с custom API key {url}: {e}", exc_info=True)
-            return None, []
-    else:
-        # Use global extractor
-        extractor = get_article_extractor()
-        return await extractor.extract_article_content(url)
+            scraper_type = ScraperType(scraper_type)
+        except ValueError:
+            logger.warning(f"Unknown scraper type: {scraper_type}, using BOTASAURUS")
+            scraper_type = ScraperType.BOTASAURUS
+    
+    extractor = ArticleExtractor(scraper_type=scraper_type, api_key=api_key)
+    return await extractor.extract_article_content(url)

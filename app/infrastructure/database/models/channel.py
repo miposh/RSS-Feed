@@ -1,7 +1,10 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel, Field
+
+
+ScraperTypeValue = Literal["scraperapi", "botasaurus"]
 
 
 class ChannelModel(BaseModel):
@@ -12,7 +15,8 @@ class ChannelModel(BaseModel):
     parsing_is_enabled: bool = Field(False, description="Whether RSS parsing is enabled for this channel")
     interval_time: int = Field(300, description="RSS feed check interval in seconds (default: 300 = 5 minutes)")
     scraper_is_enabled: bool = Field(True, description="Whether to use scraper API for full article extraction")
-    scraper_api_key: Optional[str] = Field(None, description="API key for scraper service (optional, can use global key)")
+    scraper_type: ScraperTypeValue = Field("botasaurus", description="Type of scraper: scraperapi or botasaurus")
+    scraper_api_key: Optional[str] = Field(None, description="API key for scraper service (required for scraperapi)")
     created_at: datetime = Field(..., description="Timestamp of channel creation")
 
     class Config:

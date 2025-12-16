@@ -23,6 +23,7 @@ class DatabaseSchema:
         "004_create_feed_subscriptions_table.sql",
         "005_create_rss_posts_table.sql",
         "006_add_channel_settings.sql",
+        "007_add_scraper_type.sql",
     ]
     
     def __init__(self, connection: BaseConnection):

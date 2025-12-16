@@ -31,8 +31,10 @@ from app.bot.dialogs.flows.main.handlers import (
     on_interval_preset_selected,
     on_list_sources,
     on_remove_source,
+    on_scraper_type_selected,
     on_set_api_key_clicked,
     on_set_interval_clicked,
+    on_set_scraper_type_clicked,
     on_settings_clicked,
     on_source_selected,
     on_source_url_input,
@@ -203,6 +205,7 @@ rss_parser_dialog = Dialog(
             "<b>⚙️ Настройки группы</b>\n\n"
             "<b>⏱ Интервал проверки:</b> {interval_time} сек ({interval_minutes} мин)\n"
             "<b>🔧 Скрапер:</b> {scraper_status}\n"
+            "<b>🔄 Тип скрапера:</b> {scraper_type_name}\n"
             "<b>🔑 API ключ:</b> {api_key_status}\n\n"
             "Выберите действие:"
         ),
@@ -212,12 +215,17 @@ rss_parser_dialog = Dialog(
             on_click=on_toggle_scraper,
         ),
         Button(
+            text=Const("🔄 Выбрать тип скрапера"),
+            id="set_scraper_type_btn",
+            on_click=on_set_scraper_type_clicked,
+        ),
+        Button(
             text=Const("⏱ Изменить интервал"),
             id="set_interval_btn",
             on_click=on_set_interval_clicked,
         ),
         Button(
-            text=Const("🔑 Установить API ключ"),
+            text=Const("🔑 Установить API ключ (ScraperAPI)"),
             id="set_api_key_btn",
             on_click=on_set_api_key_clicked,
         ),
@@ -330,6 +338,36 @@ rss_parser_dialog = Dialog(
         ),
         getter=get_channel_settings_data,
         state=MainSG.set_scraper_api_key,
+        parse_mode=ParseMode.HTML,
+    ),
+    Window(
+        Format(
+            "<b>🔄 Выбор типа скрапера</b>\n\n"
+            "<b>Текущий тип:</b> {scraper_type_name}\n\n"
+            "Выберите метод извлечения контента:\n\n"
+            "• <b>ScraperAPI</b> - платный сервис, обход блокировок (требуется API ключ)\n"
+            "• <b>Botasaurus</b> - бесплатный, анти-детект запросы"
+        ),
+        Group(
+            Select(
+                Format("{item[0]}"),
+                id="scraper_type_select",
+                item_id_getter=lambda x: x[1],
+                items=[
+                    ("🔧 ScraperAPI", "scraperapi"),
+                    ("🤖 Botasaurus", "botasaurus"),
+                ],
+                on_click=on_scraper_type_selected,
+            ),
+            width=1,
+        ),
+        Button(
+            text=Const("← Назад"),
+            id="back_to_settings_btn3",
+            on_click=on_back_to_settings,
+        ),
+        getter=get_channel_settings_data,
+        state=MainSG.set_scraper_type,
         parse_mode=ParseMode.HTML,
     ),
     # ============ Global Settings Windows ============

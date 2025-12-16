@@ -12,6 +12,7 @@ class MainSG(StatesGroup):
     set_interval = State()
     set_interval_custom = State()
     set_scraper_api_key = State()
+    set_scraper_type = State()
     # Delete group confirmation
     delete_group_confirm = State()
     # Global settings for all channels

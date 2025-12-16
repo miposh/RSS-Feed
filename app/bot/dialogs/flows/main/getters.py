@@ -120,17 +120,25 @@ async def get_remove_source_data(dialog_manager: DialogManager, db: DB, **kwargs
     if feeds:
         feeds = sorted(feeds, key=lambda f: f.created_at, reverse=True)
     
-    # Format sources as buttons (title, url)
+    # Format sources as buttons (title, feed_id)
+    # Use feed.id instead of URL to avoid BUTTON_DATA_INVALID error
+    # (Telegram limits callback_data to 64 bytes)
     source_buttons = []
     if feeds:
         for feed in feeds:
             title = feed.title or feed.url[:50] + "..."
-            source_buttons.append((title, feed.url))
+            source_buttons.append((title, str(feed.id)))
     
     return {
         "group_name": channel.title,
         "source_buttons": source_buttons,
     }
+
+
+SCRAPER_TYPE_NAMES = {
+    "scraperapi": "ScraperAPI",
+    "botasaurus": "Botasaurus",
+}
 
 
 async def get_channel_settings_data(dialog_manager: DialogManager, db: DB, **kwargs) -> dict:
@@ -145,6 +153,8 @@ async def get_channel_settings_data(dialog_manager: DialogManager, db: DB, **kwa
             "scraper_is_enabled": False,
             "scraper_status": "❌ Выключен",
             "scraper_toggle_text": "⭕️ Включить скрапер",
+            "scraper_type": "botasaurus",
+            "scraper_type_name": "Botasaurus",
             "api_key_status": "Не установлен",
         }
     
@@ -159,12 +169,15 @@ async def get_channel_settings_data(dialog_manager: DialogManager, db: DB, **kwa
             "scraper_is_enabled": False,
             "scraper_status": "❌ Выключен",
             "scraper_toggle_text": "⭕️ Включить скрапер",
+            "scraper_type": "botasaurus",
+            "scraper_type_name": "Botasaurus",
             "api_key_status": "Не установлен",
         }
     
     interval_minutes = channel.interval_time // 60
     scraper_toggle_text = "🔘 Выключить скрапер" if channel.scraper_is_enabled else "⭕️ Включить скрапер"
     scraper_status = "✅ Включен" if channel.scraper_is_enabled else "❌ Выключен"
+    scraper_type_name = SCRAPER_TYPE_NAMES.get(channel.scraper_type, channel.scraper_type)
     
     if channel.scraper_api_key:
         # Show masked API key
@@ -180,6 +193,8 @@ async def get_channel_settings_data(dialog_manager: DialogManager, db: DB, **kwa
         "scraper_is_enabled": channel.scraper_is_enabled,
         "scraper_status": scraper_status,
         "scraper_toggle_text": scraper_toggle_text,
+        "scraper_type": channel.scraper_type,
+        "scraper_type_name": scraper_type_name,
         "api_key_status": api_key_status,
     }
 
