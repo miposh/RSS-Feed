@@ -34,11 +34,8 @@ def _get_fetch_html_func() -> Callable[[str], str] | None:
             Fetch HTML using Botasaurus browser with anti-detection.
             Results are cached automatically.
             """
-            if driver.config.is_new:
-                driver.google_get(url)
-            else:
-                driver.get(url)
-            
+            # Always use google_get for anti-detection bypass on every URL
+            driver.google_get(url)
             return driver.page_html
         
         return fetch_html_browser

@@ -104,19 +104,19 @@ class ArticleExtractor:
             Tuple (text, list_of_image_urls)
         """
         try:
-            # Create Article object with HTML
-            article = Article(url, language='ru')
+            # Create Article object - let newspaper4k auto-detect language
+            article = Article(url)
             
-            # Download is skipped, we set html and html2text directly
-            article.download_state = 2  # ArticleDownloadState.SUCCESS
-            article.html = html
-            
-            # Parse the article
+            # Use proper method to load pre-fetched HTML
+            article.download(input_html=html)
             article.parse()
+            
+            detected_lang = getattr(article, 'meta_lang', None) or 'auto'
+            logger.debug(f"Detected language for {url}: {detected_lang}")
             
             text = article.text.strip() if article.text else None
 
-            # Extract only top_image if available
+            # Extract top_image
             images = []
             if article.top_image:
                 images.append(article.top_image)
@@ -143,6 +143,27 @@ def get_article_extractor() -> ArticleExtractor:
     return _article_extractor
 
 
+# Cache extractors by (scraper_type, api_key) to reuse scrapers and FIFO queue
+_extractor_cache: dict[tuple[str, Optional[str]], ArticleExtractor] = {}
+
+
+def _get_cached_extractor(
+    scraper_type: ScraperType,
+    api_key: Optional[str] = None
+) -> ArticleExtractor:
+    """Get or create cached ArticleExtractor instance."""
+    cache_key = (scraper_type.value, api_key)
+    
+    if cache_key not in _extractor_cache:
+        _extractor_cache[cache_key] = ArticleExtractor(
+            scraper_type=scraper_type,
+            api_key=api_key
+        )
+        logger.debug(f"Created new ArticleExtractor for {scraper_type.value}")
+    
+    return _extractor_cache[cache_key]
+
+
 async def extract_article_content(
     url: str,
     scraper_type: ScraperType | str = ScraperType.BOTASAURUS,
@@ -150,6 +171,9 @@ async def extract_article_content(
 ) -> tuple[Optional[str], List[str]]:
     """
     Convenience function to extract article content and images from URL.
+    
+    Uses cached extractors to ensure all requests go through the same
+    FIFO queue with proper rate limiting.
     
     Args:
         url: The article URL to fetch and parse
@@ -166,5 +190,5 @@ async def extract_article_content(
             logger.warning(f"Unknown scraper type: {scraper_type}, using BOTASAURUS")
             scraper_type = ScraperType.BOTASAURUS
     
-    extractor = ArticleExtractor(scraper_type=scraper_type, api_key=api_key)
+    extractor = _get_cached_extractor(scraper_type, api_key)
     return await extractor.extract_article_content(url)

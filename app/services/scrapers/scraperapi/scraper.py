@@ -47,7 +47,7 @@ class ScraperAPIScraper(BaseScraper):
     
     async def fetch_html(self, url: str) -> Optional[str]:
         """
-        Fetch HTML content using ScraperAPI.
+        Fetch HTML content using ScraperAPI with JavaScript rendering enabled.
         
         Args:
             url: The URL to fetch
@@ -60,11 +60,11 @@ class ScraperAPIScraper(BaseScraper):
             return None
         
         try:
-            logger.debug(f"Fetching via ScraperAPI: {url}")
+            logger.debug(f"Fetching via ScraperAPI with JS rendering: {url}")
             loop = asyncio.get_event_loop()
             html_content = await loop.run_in_executor(
                 None,
-                lambda: self._client.get(url=url)
+                lambda: self._client.get(url=url, render=True)
             )
             
             if html_content:

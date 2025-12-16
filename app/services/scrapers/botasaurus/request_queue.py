@@ -151,7 +151,7 @@ class RequestQueue:
         self._pending_count += 1
         await self._queue.put(request)
         
-        logger.debug("Enqueued request for %s, queue size: %d", url, self._pending_count)
+        logger.info("FIFO: Enqueued request #%d for %s", self._pending_count, url)
         
         try:
             return await future
@@ -183,8 +183,8 @@ class RequestQueue:
             await self._apply_rate_limit()
             
             wait_time = time.time() - request.added_at
-            logger.debug(
-                "Processing request for %s (waited %.2fs in queue)",
+            logger.info(
+                "FIFO: Processing request for %s (waited %.2fs in queue)",
                 request.url,
                 wait_time,
             )

@@ -432,6 +432,22 @@ class ChannelRSSWorker:
     
     async def _format_post_message(self, post: RSSPost, include_hidden_link: bool = False) -> str:
         """Format post message for Telegram."""
+        # Useless content patterns (case-insensitive)
+        USELESS_PATTERNS = [
+            r'^\s*none\s*$',
+            r'^\s*null\s*$',
+            r'^\s*\[mehr\]\s*$',
+            r'^\s*\[more\]\s*$',
+            r'^\s*read more\s*$',
+            r'^\s*weiterlesen\s*$',
+            r'^\s*lire la suite\s*$',
+            r'^\s*continuer la lecture\s*$',
+            r'^\s*…\s*$',
+            r'^\s*\.\.\.\s*$',
+        ]
+        USELESS_REGEX = re.compile('|'.join(USELESS_PATTERNS), re.IGNORECASE)
+        MIN_CONTENT_LENGTH = 30
+        
         def clean_html(text: str) -> str:
             """Remove HTML tags and decode entities."""
             if not text:
@@ -442,6 +458,10 @@ class ChannelRSSWorker:
             text = text.replace('&gt;', '>')
             text = text.replace('&quot;', '"')
             text = text.replace('&nbsp;', ' ')
+            text = text.replace('&#8217;', "'")
+            text = text.replace('&#8216;', "'")
+            text = text.replace('&#8220;', '"')
+            text = text.replace('&#8221;', '"')
             # Remove all HTML tags
             text = re.sub(r'<[^>]+>', '', text)
             text = re.sub(r'\s+', ' ', text)
@@ -456,6 +476,17 @@ class ChannelRSSWorker:
             text = text.replace('>', '&gt;')
             return text
         
+        def is_useless_content(text: str) -> bool:
+            """Check if content is useless (None, [mehr], etc.)."""
+            if not text:
+                return True
+            cleaned = clean_html(text)
+            if len(cleaned) < MIN_CONTENT_LENGTH:
+                return True
+            if USELESS_REGEX.match(cleaned):
+                return True
+            return False
+        
         message = ""
         
         # Add hidden link for image preview if available and requested
@@ -469,7 +500,8 @@ class ChannelRSSWorker:
         # Use content if available, otherwise fall back to summary
         text_to_use = post.content if post.content else post.summary
         
-        if text_to_use:
+        # Only add text if it's meaningful
+        if text_to_use and not is_useless_content(text_to_use):
             # Clean HTML tags, then escape special chars
             clean_text = escape_html(clean_html(text_to_use))
             

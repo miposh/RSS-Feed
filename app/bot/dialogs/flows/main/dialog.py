@@ -184,12 +184,15 @@ rss_parser_dialog = Dialog(
             "<b>Группа:</b> {group_name}\n\n"
             "Выберите источник для удаления:"
         ),
-        Select(
-            Format("{item[0]}"),
-            id="source_select",
-            item_id_getter=lambda x: x[1],
-            items="source_buttons",
-            on_click=on_source_selected,
+        Group(
+            Select(
+                Format("{item[0]}"),
+                id="source_select",
+                item_id_getter=lambda x: x[1],
+                items="source_buttons",
+                on_click=on_source_selected,
+            ),
+            width=1,
         ),
         Button(
             text=Const("← Назад"),
