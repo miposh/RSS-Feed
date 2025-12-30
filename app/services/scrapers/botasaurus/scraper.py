@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Any, Callable
 
 from ..base import BaseScraper
+from botasaurus.browser import Driver, browser
 from .request_queue import DEFAULT_REQUEST_DELAY, RequestQueue
 
 logger = logging.getLogger(__name__)
@@ -18,24 +19,54 @@ logger = logging.getLogger(__name__)
 def _get_fetch_html_func() -> Callable[[str], str] | None:
     """Lazy initialization of the browser-based fetch function."""
     try:
-        from botasaurus.browser import Driver, browser
-        
         @browser(
             reuse_driver=True,
-            cache=True,
+            cache=False,
             block_images=True,
-            max_retry=3,
+            max_retry=2,
             close_on_crash=True,
             output=None,
             create_error_logs=False,
+            headless=True,
+            wait_for_complete_page_load=False,
+            parallel=7,
+            add_arguments=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--disable-plugins",
+                "--renderer-process-limit=2",
+                "--memory-pressure-off",
+            ],
         )
+
+
         def fetch_html_browser(driver: Driver, url: str) -> str:
             """
             Fetch HTML using Botasaurus browser with anti-detection.
             Results are cached automatically.
+            Handles TimeoutError by returning partial page content.
             """
-            # Always use google_get for anti-detection bypass on every URL
-            driver.google_get(url)
+            try:
+                driver.google_get(url, timeout=45)
+            except TimeoutError as e:
+                logger.warning(
+                    "Timeout loading %s: %s. Returning partial content.",
+                    url,
+                    str(e)
+                )
+                try:
+                    html = driver.page_html
+                    if html and len(html) > 100:
+                        return html
+                except Exception:
+                    pass
+                raise
+            except Exception as e:
+                logger.error("Error loading %s: %s", url, str(e))
+                raise
+            
             return driver.page_html
         
         return fetch_html_browser
@@ -50,13 +81,13 @@ def _get_fetch_html_func() -> Callable[[str], str] | None:
 
 class BotasaurusScraper(BaseScraper):
     """
-    Scraper using Botasaurus browser with anti-detection and caching.
+    Scraper using Botasaurus browser with anti-detection.
     
     Features:
         - FIFO queue for rate-limited requests
         - Configurable delay between requests
         - Reuses browser driver for efficiency
-        - Caches results to avoid re-fetching
+        - Max 7 parallel browser tabs to prevent VPS overload
         - Blocks images for speed
         - Auto-retry on failures
     """

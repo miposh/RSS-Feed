@@ -63,8 +63,8 @@ class ArticleExtractor:
                 logger.warning(f"Не удалось получить HTML для {url}")
                 return None, []
             
-            # Parse article with newspaper4k
-            text, images = self._parse_article(html_content, url)
+            # Parse article with newspaper4k (async, runs in executor)
+            text, images = await self._parse_article(html_content, url)
             if not text:
                 logger.warning(f"Не удалось извлечь текст статьи для {url}")
                 return None, images
@@ -92,9 +92,9 @@ class ArticleExtractor:
         
         return await self._scraper.fetch_html(url)
     
-    def _parse_article(self, html: str, url: str) -> tuple[Optional[str], List[str]]:
+    def _parse_article_sync(self, html: str, url: str) -> tuple[Optional[str], List[str]]:
         """
-        Parse article from HTML using newspaper4k.
+        Synchronous article parsing (runs in executor).
         
         Args:
             html: HTML content as string
@@ -104,10 +104,7 @@ class ArticleExtractor:
             Tuple (text, list_of_image_urls)
         """
         try:
-            # Create Article object - let newspaper4k auto-detect language
             article = Article(url)
-            
-            # Use proper method to load pre-fetched HTML
             article.download(input_html=html)
             article.parse()
             
@@ -116,7 +113,6 @@ class ArticleExtractor:
             
             text = article.text.strip() if article.text else None
 
-            # Extract top_image
             images = []
             if article.top_image:
                 images.append(article.top_image)
@@ -129,6 +125,11 @@ class ArticleExtractor:
         except Exception as e:
             logger.error(f"Неожиданная ошибка парсинга для {url}: {e}", exc_info=True)
             return None, []
+
+    async def _parse_article(self, html: str, url: str) -> tuple[Optional[str], List[str]]:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._parse_article_sync, html, url)
 
 
 # Global instance

@@ -75,6 +75,28 @@ class RSSPostsTable(BaseTable):
         self._log(RSSPostsTableAction.GET_POST_BY_GUID, feed_id=feed_id, guid=guid)
         return post_model
 
+    async def get_sent_guids(self, *, feed_id: int, guids: list[str]) -> set[str]:
+        """
+        Batch check: return set of GUIDs that are already sent for given feed.
+        
+        This is more efficient than checking each GUID individually in a loop.
+        Uses a single query with ANY() for all GUIDs.
+        """
+        if not guids:
+            return set()
+        
+        data: MultipleQueryResult = await self.connection.fetchmany(
+            sql="""
+                SELECT guid FROM rss_posts 
+                WHERE feed_id = %s AND guid = ANY(%s) AND is_sent = TRUE
+            """,
+            params=(feed_id, guids),
+        )
+        
+        sent_guids = {row.get("guid") for row in data.data} if data.data else set()
+        self._log(RSSPostsTableAction.GET_SENT_GUIDS, feed_id=feed_id, count=len(sent_guids))
+        return sent_guids
+
     async def get_unsent_posts(self, *, limit: int = 100) -> list[RSSPostModel] | None:
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""

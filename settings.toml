@@ -15,7 +15,7 @@ parse_mode = "HTML"
 [default.postgres]
 name = "rss"
 host = "144.31.246.5"
-port = 5405
+port = 5403
 user = "polyana"
 
 [default.redis]

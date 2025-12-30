@@ -11,7 +11,54 @@ from app.services.parser.models import RSSPost
 logger = logging.getLogger(__name__)
 
 
-class RSSParser:    
+class RSSParser:
+    @staticmethod
+    def fix_mojibake(text: str) -> str:
+        """
+        Исправляет проблемы с кодировкой (mojibake).
+        Когда UTF-8 текст был неправильно декодирован как Latin-1/Windows-1252.
+        
+        Примеры:
+        - "ГЂГўГІГ®Г¬Г®ГЎГЁГ«ГЁ" -> "Автомобили" (Windows-1251)
+        - "Ð²ÑÐ¾Ð¼Ð¾Ð±Ð¸Ð»Ð¸" -> "Автомобили" (Latin-1)
+        """
+        if not text or len(text) < 3:
+            return text
+        
+        # Проверяем наличие характерных символов mojibake
+        # Для кириллицы в UTF-8, декодированной как Latin-1: Ð, Ñ, Ð¾, Ð¸, Ð°, и т.д.
+        # Для кириллицы в UTF-8, декодированной как Windows-1252: Г, Гў, ГЁ, и т.д.
+        mojibake_patterns = [
+            # Latin-1 mojibake (наиболее частый случай)
+            ('Ð', 'Ñ', 'Ð¾', 'Ð¸', 'Ð°', 'Ñ', 'Ð²', 'Ð»'),
+            # Windows-1252 mojibake
+            ('Г', 'Гў', 'ГЁ', 'Г®', 'Г ', 'Г±', 'ГІ', 'Гј', 'Гђ'),
+        ]
+        
+        has_mojibake = any(
+            any(indicator in text for indicator in pattern)
+            for pattern in mojibake_patterns
+        )
+        
+        if not has_mojibake:
+            return text
+        
+        try:
+            # Пытаемся перекодировать: str -> latin-1 bytes -> utf-8 str
+            text_bytes = text.encode('latin-1')
+            fixed_text = text_bytes.decode('utf-8')
+            
+            # Проверяем, что результат выглядит разумно
+            # Должно быть достаточно кириллических символов
+            cyrillic_chars = sum(1 for c in fixed_text if '\u0400' <= c <= '\u04FF')
+            if cyrillic_chars > 0:
+                logger.info(f"Fixed mojibake in text (first 50 chars): '{text[:50]}...' -> '{fixed_text[:50]}...'")
+                return fixed_text
+        except (UnicodeDecodeError, UnicodeEncodeError) as e:
+            logger.debug(f"Failed to fix mojibake for '{text[:50]}...': {e}")
+        
+        return text
+    
     @staticmethod
     def decode_content(content_bytes: bytes) -> str:
         try:
@@ -96,6 +143,13 @@ class RSSParser:
         
         # Извлекаем автора
         author = RSSParser._extract_author(entry)
+
+        # Исправляем проблемы с кодировкой во всех текстовых полях
+        title = RSSParser.fix_mojibake(title)
+        summary = RSSParser.fix_mojibake(summary)
+        content = RSSParser.fix_mojibake(content)
+        if author:
+            author = RSSParser.fix_mojibake(author)
 
         # Не извлекаем изображения из RSS - только через scraper
         image_urls = []
@@ -198,9 +252,20 @@ class RSSParser:
 
 
 async def parse_rss_feed(content_bytes: bytes) -> Optional[List[RSSPost]]:
+    """
+    Parse RSS feed asynchronously.
+    
+    Runs CPU-bound feedparser.parse() in a thread pool executor
+    to avoid blocking the event loop.
+    """
+    import asyncio
+    
     content = RSSParser.decode_content(content_bytes)
     
-    feed_data = RSSParser.parse_feed(content)
+    # Run synchronous feedparser.parse() in executor to avoid blocking
+    loop = asyncio.get_running_loop()
+    feed_data = await loop.run_in_executor(None, RSSParser.parse_feed, content)
+    
     if not feed_data:
         return None
     
@@ -208,7 +273,8 @@ async def parse_rss_feed(content_bytes: bytes) -> Optional[List[RSSPost]]:
         logger.warning("Feed has no entries")
         return []
     
-    posts = RSSParser.extract_posts(feed_data)
+    # Extract posts also in executor (can be CPU-intensive for large feeds)
+    posts = await loop.run_in_executor(None, RSSParser.extract_posts, feed_data)
     
     logger.info(
         "Feed parsed successfully",

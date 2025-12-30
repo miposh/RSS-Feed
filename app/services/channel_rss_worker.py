@@ -213,6 +213,8 @@ class ChannelRSSWorker:
                 return
             
             # Identify new posts and filter out already sent ones
+            # Collect all GUIDs first, then batch-check in one transaction
+            post_guids = [post.guid for post in posts]
             new_posts = []
             
             async with self.db_pool.connection() as raw_connection:
@@ -220,16 +222,16 @@ class ChannelRSSWorker:
                     connection = PsycopgConnection(raw_connection)
                     db = DB(connection)
                     
-                    for post in posts:
-                        existing_post = await db.rss_posts.get_post_by_guid(
-                            feed_id=feed_id,
-                            guid=post.guid,
-                        )
-                        
-                        if existing_post and existing_post.is_sent:
-                            continue
-                        
-                        new_posts.append(post)
+                    # Batch check: get all existing sent posts for these GUIDs
+                    sent_guids = await db.rss_posts.get_sent_guids(
+                        feed_id=feed_id,
+                        guids=post_guids,
+                    )
+                    
+            # Filter outside of transaction
+            for post in posts:
+                if post.guid not in sent_guids:
+                    new_posts.append(post)
             
             if not new_posts:
                 logger.debug(f"No new posts for channel {self.channel.channel_id}")
