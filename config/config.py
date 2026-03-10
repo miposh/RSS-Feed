@@ -28,14 +28,6 @@ class PostgresConfig(BaseModel):
     password: str = Field(..., description="PostgreSQL user password.")
 
 
-class RedisConfig(BaseModel):
-    host: str = Field(default="localhost", description="Redis server hostname.")
-    port: int = Field(default=6379, description="Redis server port.")
-    database: int = Field(default=0, description="Redis database index.")
-    username: str | None = Field(None, description="Optional Redis username.")
-    password: str | None = Field(None, description="Optional Redis password.")
-
-
 class RSSConfig(BaseModel):
     check_interval: int = Field(default=300, description="Interval for checking RSS feeds in seconds.")
     cleanup_interval: int = Field(default=86400, description="Interval for cleanup tasks in seconds.")
@@ -46,7 +38,6 @@ class AppConfig(BaseModel):
     logs: LogsConfig
     bot: BotConfig
     postgres: PostgresConfig
-    redis: RedisConfig
     rss: RSSConfig
 
 
@@ -87,14 +78,6 @@ def get_config() -> AppConfig:
         password=_settings.postgres_password,
     )
 
-    redis = RedisConfig(
-        host=_settings.get("redis.host", "localhost"),
-        port=_settings.get("redis.port", 6379),
-        database=_settings.get("redis.database", 0),
-        username=_settings.get("redis_username"),
-        password=_settings.get("redis_password"),
-    )
-
     rss = RSSConfig(
         check_interval=_settings.get("rss_check_interval", 300),
         cleanup_interval=_settings.get("cleanup_interval", 86400),
@@ -105,6 +88,5 @@ def get_config() -> AppConfig:
         logs=logs,
         bot=bot,
         postgres=postgres,
-        redis=redis,
         rss=rss,
     )

@@ -43,24 +43,6 @@ def setup_logging(logs_config: LogsConfig) -> None:
 
 logger = logging.getLogger(__name__)
 
-# async def set_bot_commands(bot: Bot) -> None:
-#     group_commands = [
-#         BotCommand(command="start", description="информация о боте"),
-#         BotCommand(command="add", description="добавить RSS-канал"),
-#         BotCommand(command="list", description="показать список RSS-каналов"),
-#         BotCommand(command="remove", description="удалить RSS-канал"),
-#     ]
-    
-#     private_commands = [
-#         BotCommand(command="start", description="открыть меню управления"),
-#         BotCommand(command="manage", description="управление фидами"),
-#         BotCommand(command="help", description="помощь"),
-#     ]
-
-#     await bot.set_my_commands(group_commands, scope=BotCommandScopeDefault())
-#     await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
-#     logger.info("Bot commands have been set successfully")
-
 async def on_startup(bot: Bot, db_pool) -> tuple[ChannelRSSWorkerService, CleanupService]:
     logger.info("Bot is starting...")
 
