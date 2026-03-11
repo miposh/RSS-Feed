@@ -10,6 +10,7 @@ newspaper4k
 Brotli
 lxml-html-clean
 psycopg
+psutil
 pydantic
 psycopg_pool
 pytest
