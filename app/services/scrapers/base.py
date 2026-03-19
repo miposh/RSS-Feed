@@ -13,6 +13,7 @@ class ScraperType(str, Enum):
     """Available scraper types."""
     SCRAPERAPI = "scraperapi"
     BOTASAURUS = "botasaurus"
+    BROWSER_SERVICE = "browser_service"
 
 
 class BaseScraper(ABC):

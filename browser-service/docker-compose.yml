@@ -1,0 +1,31 @@
+services:
+  browser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      MAX_CONCURRENT: ${MAX_CONCURRENT:-5}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-45}
+    ports:
+      - "${BROWSER_PORT:-8000}:8000"
+    shm_size: 2g
+    mem_limit: ${BROWSER_MEMORY_LIMIT:-2g}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${BROWSER_MEMORY_LIMIT:-2g}
+        reservations:
+          memory: 512m
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true

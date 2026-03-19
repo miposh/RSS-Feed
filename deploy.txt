@@ -1,0 +1,30 @@
+Структура Browser Service
+
+browser-service/
+├── main.py           # FastAPI сервис с Botasaurus
+├── requirements.txt  # Зависимости
+├── Dockerfile        # Образ с Chromium
+└── docker-compose.yml
+Как использовать
+1. Запустить сервис отдельно в Dokploy
+Создай новый проект browser-service и задеплой его. Он будет доступен по адресу http://browser:8000 внутри dokploy-network.
+
+2. Настроить основное приложение
+В .env добавь:
+
+
+BROWSER_SERVICE_URL=http://browser:8000
+3. Использовать новый scraper type
+В настройках канала выбери browser_service вместо botasaurus.
+
+API сервиса
+GET /health - проверка здоровья
+POST /fetch - получить HTML страницы
+
+{"url": "https://example.com", "timeout": 45}
+GET /fetch?url=https://example.com - простой GET запрос
+Преимущества
+Chromium удалён из основного контейнера (меньше образ, меньше памяти)
+Один браузер для всех проектов
+Перезапуск browser-service не влияет на основное приложение
+Scheduled Task docker restart browser-xxx только для браузера

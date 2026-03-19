@@ -7,6 +7,7 @@ from typing import Optional
 from .base import BaseScraper, ScraperType
 from .scraperapi import ScraperAPIScraper
 from .botasaurus import BotasaurusScraper
+from .browser_service import BrowserServiceClient
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,10 @@ class ScraperFactory:
         
         elif scraper_type == ScraperType.BOTASAURUS:
             return BotasaurusScraper()
-        
+
+        elif scraper_type == ScraperType.BROWSER_SERVICE:
+            return BrowserServiceClient()
+
         else:
             raise ValueError(f"Unknown scraper type: {scraper_type}")
     
