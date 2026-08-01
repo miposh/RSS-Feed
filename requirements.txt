@@ -1,17 +1,25 @@
-aiogram
-aiogram-dialog
-alembic
-dynaconf
-feedparser
-httpx
-scraperapi-sdk
-botasaurus
-newspaper4k
-Brotli
-lxml-html-clean
-psycopg
-psutil
-pydantic
-psycopg_pool
-pytest
-pytest-asyncio
+# Bot
+aiogram==3.30.0
+aiogram-dialog==2.6.0
+
+# Config
+dynaconf==3.3.4
+pydantic==2.13.4
+
+# Database
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
+
+# RSS / HTTP
+feedparser==6.0.14
+httpx==0.28.1
+Brotli==1.2.0
+
+# Scraping / article extraction
+scraperapi-sdk==1.6.1
+botasaurus==4.0.97
+newspaper4k==0.9.6
+lxml-html-clean==0.4.5
+
+# Runtime
+psutil==7.2.2

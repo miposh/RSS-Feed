@@ -46,16 +46,6 @@ class ScraperFactory:
 
         else:
             raise ValueError(f"Unknown scraper type: {scraper_type}")
-    
-    @staticmethod
-    def get_available_types() -> list[ScraperType]:
-        """
-        Get list of available scraper types.
-        
-        Returns:
-            List of ScraperType values
-        """
-        return list(ScraperType)
 
 
 def get_scraper(

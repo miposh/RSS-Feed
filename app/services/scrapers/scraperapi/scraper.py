@@ -61,7 +61,7 @@ class ScraperAPIScraper(BaseScraper):
         
         try:
             logger.debug(f"Fetching via ScraperAPI with JS rendering: {url}")
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             html_content = await loop.run_in_executor(
                 None,
                 lambda: self._client.get(url, params={"render": "true"})

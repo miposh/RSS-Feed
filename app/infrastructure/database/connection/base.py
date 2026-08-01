@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from app.infrastructure.database.query.results import (
@@ -9,20 +10,22 @@ from app.infrastructure.database.query.results import (
 
 class BaseConnection(ABC):
     @abstractmethod
+    def transaction(self) -> AbstractAsyncContextManager[Any]:
+        """Open a nested transaction (savepoint) that can fail on its own."""
+
+    @abstractmethod
     async def execute(
         self,
         sql: str,
-        params: dict[str, Any] | None = None,
-        connection: Any | None = None,
-    ) -> None:
+        params: tuple[Any, ...] | None = None,
+    ) -> int:
         pass
 
     @abstractmethod
     async def fetchone(
         self,
         sql: str,
-        params: dict[str, Any] | None = None,
-        connection: Any | None = None,
+        params: tuple[Any, ...] | None = None,
     ) -> SingleQueryResult:
         pass
 
@@ -30,8 +33,7 @@ class BaseConnection(ABC):
     async def fetchmany(
         self,
         sql: str,
-        params: dict[str, Any] | None = None,
-        connection: Any | None = None,
+        params: tuple[Any, ...] | None = None,
     ) -> MultipleQueryResult:
         pass
 
@@ -39,34 +41,14 @@ class BaseConnection(ABC):
     async def insert_and_fetchone(
         self,
         sql: str,
-        params: dict[str, Any],
-        connection: Any | None = None,
+        params: tuple[Any, ...],
     ) -> SingleQueryResult:
-        pass
-
-    @abstractmethod
-    async def insert_and_fetchmany(
-        self,
-        sql: str,
-        params: list[dict[str, Any]],
-        connection: Any | None = None,
-    ) -> MultipleQueryResult:
         pass
 
     @abstractmethod
     async def update_and_fetchone(
         self,
         sql: str,
-        params: dict[str, Any],
-        connection: Any | None = None,
+        params: tuple[Any, ...],
     ) -> SingleQueryResult:
-        pass
-
-    @abstractmethod
-    async def update_and_fetchmany(
-        self,
-        sql: str,
-        params: list[dict[str, Any]],
-        connection: Any | None = None,
-    ) -> MultipleQueryResult:
         pass

@@ -3,6 +3,7 @@ from .channel import ChannelModel
 from .rss_feed import RSSFeedModel
 from .rss_post import RSSPostModel
 from .feed_subscription import FeedSubscriptionModel
+from .channel_admin import ChannelAdminModel
 
 __all__ = [
     "UserModel",
@@ -10,4 +11,5 @@ __all__ = [
     "RSSFeedModel",
     "RSSPostModel",
     "FeedSubscriptionModel",
+    "ChannelAdminModel",
 ]

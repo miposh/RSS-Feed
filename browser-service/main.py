@@ -7,7 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query
 from pydantic import BaseModel, HttpUrl
 from botasaurus.browser import Driver, browser
 
@@ -35,7 +35,6 @@ class FetchResponse(BaseModel):
     url: str
 
 
-# Semaphore for concurrency control
 semaphore: asyncio.Semaphore
 
 
@@ -60,7 +59,6 @@ semaphore: asyncio.Semaphore
     ],
 )
 def fetch_html_sync(driver: Driver, url: str, timeout: int = 45) -> str:
-    """Fetch HTML using Botasaurus browser with anti-detection."""
     try:
         driver.google_get(url, timeout=timeout)
     except TimeoutError:
@@ -73,14 +71,12 @@ def fetch_html_sync(driver: Driver, url: str, timeout: int = 45) -> str:
 
 
 async def fetch_html_async(url: str, timeout: int = 45) -> str:
-    """Async wrapper for the sync browser function."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, fetch_html_sync, url, timeout)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan handler."""
     global semaphore
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
     logger.info(f"Browser service started (max_concurrent={MAX_CONCURRENT})")
@@ -104,7 +100,6 @@ async def health_check():
 
 @app.post("/fetch", response_model=FetchResponse)
 async def fetch_page(request: FetchRequest):
-    """Fetch HTML content from URL using browser."""
     url = str(request.url)
 
     async with semaphore:

@@ -1,14 +1,15 @@
+import html
 import logging
 import asyncio
 import re
 from datetime import datetime, timezone
+from email.utils import format_datetime, parsedate_to_datetime
 from typing import Dict, Optional
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from psycopg_pool import AsyncConnectionPool
-from psycopg import errors as pg_errors
 
 from app.infrastructure.database.db import DB
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
@@ -21,10 +22,109 @@ from app.services.message_queue import get_message_queue
 
 logger = logging.getLogger(__name__)
 
+# Max posts published per feed per check; the rest are marked read to avoid flooding.
+MAX_POSTS_PER_CHECK = 3
+
+# Max feeds fetched concurrently within a single channel.
+MAX_CONCURRENT_FEEDS = 5
+
+TELEGRAM_CAPTION_LIMIT = 1024
+TELEGRAM_MESSAGE_LIMIT = 4080
+
+# Placeholder bodies that carry no information and should be dropped.
+USELESS_CONTENT_REGEX = re.compile(
+    r"^\s*(none|null|\[mehr\]|\[more\]|read more|weiterlesen|lire la suite"
+    r"|continuer la lecture|…|\.\.\.)\s*$",
+    re.IGNORECASE,
+)
+MIN_CONTENT_LENGTH = 30
+
+HTML_TAG_REGEX = re.compile(r"<[^>]+>")
+WHITESPACE_REGEX = re.compile(r"\s+")
+
+
+def _clean_html(text: str) -> str:
+    """Strip HTML tags, decode entities and collapse whitespace."""
+    if not text:
+        return ""
+
+    text = html.unescape(text)
+    text = HTML_TAG_REGEX.sub("", text)
+    return WHITESPACE_REGEX.sub(" ", text).strip()
+
+
+def _is_useless_content(text: str) -> bool:
+    """Check whether the body is a placeholder rather than real content."""
+    if not text:
+        return True
+
+    cleaned = _clean_html(text)
+    return len(cleaned) < MIN_CONTENT_LENGTH or bool(USELESS_CONTENT_REGEX.match(cleaned))
+
+
+def format_post_message(post: RSSPost) -> str:
+    """Render a post as a Telegram HTML message."""
+    title = html.escape(_clean_html(post.title))
+    message = f"<b>{title}</b>\n\n"
+
+    text_to_use = post.content or post.summary
+
+    if text_to_use and not _is_useless_content(text_to_use):
+        clean_text = html.escape(_clean_html(text_to_use))
+
+        # Reserve room for the title, the link and the timestamp.
+        max_content_length = TELEGRAM_MESSAGE_LIMIT - len(message) - 150
+
+        if len(clean_text) > max_content_length:
+            clean_text = clean_text[:max_content_length - 3] + "..."
+
+        message += f"{clean_text}\n\n"
+
+    if post.link:
+        message += f"<a href='{post.link}'>Читать полностью</a>\n\n"
+
+    if post.published_time:
+        message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
+
+    return message
+
+
+def _parse_http_date(value: Optional[str]) -> Optional[datetime]:
+    """Parse an HTTP date header into an aware UTC datetime.
+
+    Headers with an unknown zone (``-0000``) parse as naive, so they are pinned
+    to UTC rather than left for the database to interpret.
+    """
+    if not value:
+        return None
+
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        logger.debug(f"Unparseable Last-Modified header: {value!r}")
+        return None
+
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _format_http_date(value: Optional[datetime]) -> Optional[str]:
+    """Render a stored timestamp as an ``If-Modified-Since`` header value.
+
+    ``usegmt`` insists on ``timezone.utc`` specifically, and psycopg hands back
+    ``ZoneInfo('Etc/UTC')``, so the value is converted first.
+    """
+    if not value:
+        return None
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+
+    return format_datetime(value.astimezone(timezone.utc), usegmt=True)
+
 
 class ChannelRSSWorker:
     """Worker for a single channel's RSS feed processing."""
-    
+
     def __init__(
         self,
         channel: ChannelModel,
@@ -44,25 +144,25 @@ class ChannelRSSWorker:
             f"Worker initialized for channel {self.channel.channel_id} ({self.channel.title}): "
             f"interval={self.channel.interval_time}s, scraper={self.channel.scraper_is_enabled}"
         )
-    
+
     async def start(self) -> None:
         """Start the worker."""
         if self.running:
             logger.warning(f"Worker for channel {self.channel.channel_id} is already running")
             return
-        
+
         self.running = True
         self.task = asyncio.create_task(self._check_feeds_loop())
         logger.info(
             f"Worker started for channel {self.channel.channel_id} ({self.channel.title}) "
             f"with interval {self.channel.interval_time}s"
         )
-    
+
     async def stop(self) -> None:
         """Stop the worker."""
         if not self.running:
             return
-        
+
         self.running = False
         if self.task:
             self.task.cancel()
@@ -70,26 +170,25 @@ class ChannelRSSWorker:
                 await self.task
             except asyncio.CancelledError:
                 pass
-        
+
         logger.info(f"Worker stopped for channel {self.channel.channel_id} ({self.channel.title})")
-    
+
     async def update_settings(self, channel: ChannelModel) -> None:
         """Update worker settings and restart if necessary."""
         old_interval = self.channel.interval_time
         old_scraper = self.channel.scraper_is_enabled
         old_scraper_type = self.channel.scraper_type
         old_api_key = self.channel.scraper_api_key
-        
+
         self.channel = channel
-        
-        # Check if settings changed
+
         settings_changed = (
             old_interval != channel.interval_time or
             old_scraper != channel.scraper_is_enabled or
             old_scraper_type != channel.scraper_type or
             old_api_key != channel.scraper_api_key
         )
-        
+
         if settings_changed:
             logger.info(
                 f"Settings changed for channel {self.channel.channel_id}: "
@@ -97,255 +196,175 @@ class ChannelRSSWorker:
                 f"scraper={old_scraper}→{channel.scraper_is_enabled}, "
                 f"api_key_changed={old_api_key != channel.scraper_api_key}"
             )
-            
+
             # Restart the worker with new settings
             await self.stop()
             await self.start()
-    
+
     async def _check_feeds_loop(self) -> None:
         """Main loop that checks feeds at the configured interval."""
         while self.running:
             try:
                 await self._check_channel_feeds()
-            except pg_errors.UndefinedTable as e:
-                logger.warning(
-                    f"Database table missing for channel {self.channel.channel_id}. "
-                    f"Please run migrations: python apply_migrations.py. Error: {e}"
-                )
             except Exception as e:
                 logger.error(
                     f"Error checking feeds for channel {self.channel.channel_id}: {e}",
                     exc_info=True
                 )
-            
+
             # Wait for the configured interval
             await asyncio.sleep(self.channel.interval_time)
-    
+
     async def _check_channel_feeds(self) -> None:
-        """Check all RSS feeds subscribed by this channel."""
-        to_process = []
-
+        """Check all enabled RSS feeds subscribed by this channel."""
         async with self.db_pool.connection() as raw_connection:
-            async with raw_connection.transaction():
-                connection = PsycopgConnection(raw_connection)
-                db = DB(connection)
-                
-                # Get all feed subscriptions for this channel
-                subscriptions = await db.feed_subscriptions.get_subscriptions_by_channel(
-                    channel_id=self.channel.id
-                )
-                
-                if not subscriptions:
-                    logger.debug(f"No subscriptions for channel {self.channel.channel_id}")
-                    return
-                
-                for subscription in subscriptions:
-                    # Get feed info
-                    feed = await db.rss_feeds.get_feed(feed_id=subscription.feed_id)
-                    if not feed or not feed.enabled:
-                        continue
-                    
-                    to_process.append((subscription, feed))
+            db = DB(PsycopgConnection(raw_connection))
+            feeds = await db.rss_feeds.get_feeds_by_channel(
+                channel_id=self.channel.id,
+                enabled_only=True,
+            )
 
-        if not to_process:
+        if not feeds:
             logger.debug(f"No enabled feeds for channel {self.channel.channel_id}")
             return
 
         logger.info(
-            f"Checking {len(to_process)} feeds for channel {self.channel.channel_id} ({self.channel.title})"
+            f"Checking {len(feeds)} feeds for channel {self.channel.channel_id} ({self.channel.title})"
         )
-        
-        # Process feeds concurrently with a limit
-        semaphore = asyncio.Semaphore(5)  # Process max 5 feeds at once per channel
 
-        async def process_with_semaphore(sub, fd):
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_FEEDS)
+
+        async def process_with_semaphore(feed):
             async with semaphore:
                 try:
-                    await self._process_feed(
-                        feed_id=fd.id,
-                        feed_url=fd.url,
-                        last_modified=fd.last_modified,
-                        etag=fd.etag,
-                    )
+                    await self._process_feed(feed)
                 except Exception as e:
-                     logger.error(
-                        f"Error processing subscription {sub.id} for channel {self.channel.channel_id}: {e}",
+                    logger.error(
+                        f"Error processing feed {feed.url} for channel {self.channel.channel_id}: {e}",
                         exc_info=True
                     )
 
-        await asyncio.gather(*(process_with_semaphore(sub, feed) for sub, feed in to_process))
-    
-    async def _process_feed(
-        self,
-        feed_id: int,
-        feed_url: str,
-        last_modified: str = None,
-        etag: str = None
-    ) -> None:
+        await asyncio.gather(*(process_with_semaphore(feed) for feed in feeds))
+
+    async def _process_feed(self, feed) -> None:
         """Process a single RSS feed."""
+        feed_id = feed.id
+        feed_url = feed.url
         logger.debug(f"Processing feed {feed_url} for channel {self.channel.channel_id}")
-        
+
         try:
-            async with get_http_client() as http_client:
-                content_bytes, status, error = await http_client.fetch(
-                    feed_url,
-                    use_cache=True,
-                    verify_ssl=False
-                )
-            
-            if status == 304:
+            http_client = await get_http_client()
+            result = await http_client.fetch(
+                feed_url,
+                etag=feed.etag,
+                last_modified=_format_http_date(feed.last_modified),
+            )
+
+            if result.not_modified:
                 logger.debug(f"Feed not modified: {feed_url}")
                 return
-            
-            if content_bytes is None:
-                logger.warning(f"Failed to fetch feed {feed_url}: {error}")
-                
+
+            if not result.ok:
+                logger.warning(f"Failed to fetch feed {feed_url}: {result.error}")
+
                 async with self.db_pool.connection() as raw_connection:
                     async with raw_connection.transaction():
-                        connection = PsycopgConnection(raw_connection)
-                        db = DB(connection)
+                        db = DB(PsycopgConnection(raw_connection))
                         await db.rss_feeds.update_error_count(feed_id=feed_id)
                 return
-            
-            posts = await parse_rss_feed(content_bytes)
+
+            posts = await parse_rss_feed(result.content)
             if not posts:
                 logger.debug(f"No posts in feed {feed_url}")
                 return
-            
-            # Identify new posts and filter out already sent ones
-            # Collect all GUIDs first, then batch-check in one transaction
-            post_guids = [post.guid for post in posts]
-            new_posts = []
-            
+
+            # Batch-check which posts were already delivered
             async with self.db_pool.connection() as raw_connection:
-                async with raw_connection.transaction():
-                    connection = PsycopgConnection(raw_connection)
-                    db = DB(connection)
-                    
-                    # Batch check: get all existing sent posts for these GUIDs
-                    sent_guids = await db.rss_posts.get_sent_guids(
-                        feed_id=feed_id,
-                        guids=post_guids,
-                    )
-                    
-            # Filter outside of transaction
-            for post in posts:
-                if post.guid not in sent_guids:
-                    new_posts.append(post)
-            
+                db = DB(PsycopgConnection(raw_connection))
+                sent_guids = await db.rss_posts.get_sent_guids(
+                    feed_id=feed_id,
+                    guids=[post.guid for post in posts],
+                )
+
+            new_posts = [post for post in posts if post.guid not in sent_guids]
+
             if not new_posts:
                 logger.debug(f"No new posts for channel {self.channel.channel_id}")
                 return
 
             # Sort by published time (newest first)
             new_posts.sort(
-                key=lambda p: p.published_time or datetime.min.replace(tzinfo=timezone.utc), 
+                key=lambda p: p.published_time or datetime.min.replace(tzinfo=timezone.utc),
                 reverse=True
             )
-            
-            # Take top 3 to send, mark the rest as read
-            posts_to_send = new_posts[:3]
-            posts_to_mark = new_posts[3:]
-            
+
+            posts_to_send = new_posts[:MAX_POSTS_PER_CHECK]
+            posts_to_mark = new_posts[MAX_POSTS_PER_CHECK:]
+
             if posts_to_mark:
-                logger.info(f"Marking {len(posts_to_mark)} old posts as read (limit 3)")
+                logger.info(f"Marking {len(posts_to_mark)} old posts as read (limit {MAX_POSTS_PER_CHECK})")
                 for post in posts_to_mark:
-                    await self._save_and_mark_post(feed_id=feed_id, post=post)
-            
+                    await self._mark_post_sent(feed_id=feed_id, post=post)
+
             # Process posts to send (oldest first to maintain chronological order in chat)
             for post in reversed(posts_to_send):
                 await self._process_post(post, feed_id)
-            
-            # Update feed metadata and reset error count on success
+
+            # Store cache validators so the next check can be a conditional request
             async with self.db_pool.connection() as raw_connection:
                 async with raw_connection.transaction():
-                    connection = PsycopgConnection(raw_connection)
-                    db = DB(connection)
+                    db = DB(PsycopgConnection(raw_connection))
                     await db.rss_feeds.update_fetch_status(
                         feed_id=feed_id,
-                        last_status=status,
-                        etag=None,
-                        last_modified=None,
+                        last_status=result.status,
+                        etag=result.etag,
+                        last_modified=_parse_http_date(result.last_modified),
                     )
                     await db.rss_feeds.reset_error_count(feed_id=feed_id)
-            
+
         except Exception as e:
             logger.error(f"Error processing feed {feed_url}: {e}", exc_info=True)
-    
+
     async def _process_post(
         self,
         post: RSSPost,
         feed_id: int,
     ) -> None:
         """Process and send a single post to the channel."""
-        # Extract full article content if scraper is enabled for this channel
-        scraper_enabled = self.channel.scraper_is_enabled
-        scraper_type = self.channel.scraper_type
-        scraper_api_key = self.channel.scraper_api_key
-        
-        if scraper_enabled and post.link:
-            try:
-                logger.debug(f"Extracting full article text: {post.link}")
-                full_article_text, article_images = await extract_article_content(
-                    post.link,
-                    scraper_type=scraper_type,
-                    api_key=scraper_api_key
-                )
-                
-                if full_article_text:
-                    # Replace content with full article text
-                    post.content = full_article_text
-                    logger.info(f"Successfully extracted full text ({len(full_article_text)} chars)")
-                else:
-                    logger.warning("Failed to extract full text, using RSS content")
-                
-                # Use only the extracted top_image if available
-                if article_images:
-                    post.image_urls = [article_images[0]]
-                    logger.info("Using top_image from article")
-                else:
-                    post.image_urls = []
+        if self.channel.scraper_is_enabled and post.link:
+            await self._enrich_with_article(post)
 
-            except Exception as e:
-                logger.error(f"Error extracting article: {e}", exc_info=True)
-
-        # Determine image URL
         image_url = post.image_urls[0] if post.image_urls else None
-        
-        # Prepare message/caption
-        message = await self._format_post_message(post, include_hidden_link=False)
+        message = format_post_message(post)
 
-        # Pre-download image if available (to use browser User-Agent and avoid 403)
+        # Pre-download the image so Telegram gets it from us with a browser
+        # User-Agent, instead of fetching the URL itself and hitting a 403.
         image_data = None
         if image_url:
             try:
-                async with get_http_client() as http_client:
-                    content, status, error = await http_client.fetch(image_url, use_cache=False, verify_ssl=False)
-                    if status == 200 and content:
-                        # Extract filename from URL for Telegram
-                        filename = image_url.split('/')[-1].split('?')[0] or 'image.jpg'
-                        image_data = BufferedInputFile(content, filename=filename)
-                    else:
-                        logger.warning(f"Failed to download image {image_url}: {error or f'HTTP {status}'}")
+                http_client = await get_http_client()
+                result = await http_client.fetch(image_url)
+                if result.ok:
+                    filename = image_url.split('/')[-1].split('?')[0] or 'image.jpg'
+                    image_data = BufferedInputFile(result.content, filename=filename)
+                else:
+                    logger.warning(
+                        f"Failed to download image {image_url}: {result.error or f'HTTP {result.status}'}"
+                    )
             except Exception as e:
                 logger.warning(f"Error downloading image {image_url}: {e}")
 
-        # Create async function to send the message
         async def send_message():
             try:
                 if image_data:
-                    # Send as photo with caption (max 1024 chars for caption)
-                    caption = message[:1024] if len(message) > 1024 else message
-                    
                     await self.bot.send_photo(
                         chat_id=self.channel.channel_id,
                         photo=image_data,
-                        caption=caption,
+                        caption=message[:TELEGRAM_CAPTION_LIMIT],
                         parse_mode="HTML",
                         show_caption_above_media=False
                     )
                 else:
-                    # No image - send as text message
                     await self.bot.send_message(
                         chat_id=self.channel.channel_id,
                         text=message,
@@ -383,23 +402,42 @@ class ChannelRSSWorker:
 
         logger.debug(f"Enqueued post for channel {self.channel.channel_id}: {post.title[:50]}")
 
-        # Mark post as sent in database
-        await self._save_and_mark_post(feed_id=feed_id, post=post)
-    
-    async def _save_and_mark_post(
+        await self._mark_post_sent(feed_id=feed_id, post=post)
+
+    async def _enrich_with_article(self, post: RSSPost) -> None:
+        """Replace RSS excerpt with the full article text, when the scraper can get it."""
+        try:
+            logger.debug(f"Extracting full article text: {post.link}")
+            full_article_text, article_images = await extract_article_content(
+                post.link,
+                scraper_type=self.channel.scraper_type,
+                api_key=self.channel.scraper_api_key
+            )
+
+            if full_article_text:
+                post.content = full_article_text
+                logger.info(f"Successfully extracted full text ({len(full_article_text)} chars)")
+            else:
+                logger.warning("Failed to extract full text, using RSS content")
+
+            # Only the article's top image is trustworthy; drop RSS-provided ones.
+            post.image_urls = [article_images[0]] if article_images else []
+
+        except Exception as e:
+            logger.error(f"Error extracting article: {e}", exc_info=True)
+
+    async def _mark_post_sent(
         self,
         feed_id: int,
         post: RSSPost
     ) -> None:
-        """Save post to database and mark it as sent."""
+        """Persist the post and flag it as delivered."""
         try:
             async with self.db_pool.connection() as raw_connection:
                 async with raw_connection.transaction():
-                    connection = PsycopgConnection(raw_connection)
-                    db = DB(connection)
-                    
-                    # Add post to database
-                    post_model = await db.rss_posts.add(
+                    db = DB(PsycopgConnection(raw_connection))
+
+                    saved = await db.rss_posts.add_sent(
                         feed_id=feed_id,
                         guid=post.guid,
                         link=post.link,
@@ -410,126 +448,19 @@ class ChannelRSSWorker:
                         published_at=post.published_time,
                         media_urls={"images": post.image_urls} if post.image_urls else None,
                     )
-                    
-                    if not post_model:
-                        # Post already exists, get it
-                        post_model = await db.rss_posts.get_post_by_guid(
-                            feed_id=feed_id,
-                            guid=post.guid
-                        )
-                    
-                    if post_model:
-                        await db.rss_posts.mark_as_sent(post_id=post_model.id)
+
+                    if saved:
                         logger.debug(f"Marked post as sent: {post.title[:50]}")
                     else:
-                        logger.error(f"Failed to save/retrieve post: {post.guid}")
-                        
-        except pg_errors.UndefinedTable as e:
-            logger.warning(
-                f"Cannot save post {post.guid}: table missing. "
-                f"Run migrations: python apply_migrations.py. Error: {e}"
-            )
+                        logger.error(f"Failed to save post: {post.guid}")
+
         except Exception as e:
             logger.error(f"Error saving post {post.guid}: {e}", exc_info=True)
-    
-    async def _format_post_message(self, post: RSSPost, include_hidden_link: bool = False) -> str:
-        """Format post message for Telegram."""
-        # Useless content patterns (case-insensitive)
-        USELESS_PATTERNS = [
-            r'^\s*none\s*$',
-            r'^\s*null\s*$',
-            r'^\s*\[mehr\]\s*$',
-            r'^\s*\[more\]\s*$',
-            r'^\s*read more\s*$',
-            r'^\s*weiterlesen\s*$',
-            r'^\s*lire la suite\s*$',
-            r'^\s*continuer la lecture\s*$',
-            r'^\s*…\s*$',
-            r'^\s*\.\.\.\s*$',
-        ]
-        USELESS_REGEX = re.compile('|'.join(USELESS_PATTERNS), re.IGNORECASE)
-        MIN_CONTENT_LENGTH = 30
-        
-        def clean_html(text: str) -> str:
-            """Remove HTML tags and decode entities."""
-            if not text:
-                return ""
-            # Decode HTML entities first
-            text = text.replace('&amp;', '&')
-            text = text.replace('&lt;', '<')
-            text = text.replace('&gt;', '>')
-            text = text.replace('&quot;', '"')
-            text = text.replace('&nbsp;', ' ')
-            text = text.replace('&#8217;', "'")
-            text = text.replace('&#8216;', "'")
-            text = text.replace('&#8220;', '"')
-            text = text.replace('&#8221;', '"')
-            # Remove all HTML tags
-            text = re.sub(r'<[^>]+>', '', text)
-            text = re.sub(r'\s+', ' ', text)
-            return text.strip()
-        
-        def escape_html(text: str) -> str:
-            """Escape special HTML characters for Telegram."""
-            if not text:
-                return ""
-            text = text.replace('&', '&amp;')
-            text = text.replace('<', '&lt;')
-            text = text.replace('>', '&gt;')
-            return text
-        
-        def is_useless_content(text: str) -> bool:
-            """Check if content is useless (None, [mehr], etc.)."""
-            if not text:
-                return True
-            cleaned = clean_html(text)
-            if len(cleaned) < MIN_CONTENT_LENGTH:
-                return True
-            if USELESS_REGEX.match(cleaned):
-                return True
-            return False
-        
-        message = ""
-        
-        # Add hidden link for image preview if available and requested
-        if include_hidden_link and post.image_urls:
-            message += f"<a href='{post.image_urls[0]}'>&#8203;</a>"
-        
-        # Clean and escape title
-        title = escape_html(clean_html(post.title))
-        message += f"<b>{title}</b>\n\n"
-        
-        # Use content if available, otherwise fall back to summary
-        text_to_use = post.content if post.content else post.summary
-        
-        # Only add text if it's meaningful
-        if text_to_use and not is_useless_content(text_to_use):
-            # Clean HTML tags, then escape special chars
-            clean_text = escape_html(clean_html(text_to_use))
-            
-            # Limit to 4080 characters
-            max_text_length = 4080
-            # Reserve space for title, link, and timestamp (approx 150 chars)
-            max_content_length = max_text_length - len(message) - 150
-            
-            if len(clean_text) > max_content_length:
-                text = clean_text[:max_content_length - 3] + "..."
-            else:
-                text = clean_text
-            message += f"{text}\n\n"
-        
-        if post.link:
-            message += f"<a href='{post.link}'>Читать полностью</a>\n\n"
-        
-        if post.published_time:
-            message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
-        
-        return message
 
 
 class ChannelRSSWorkerService:
     """Service that manages RSS workers for all enabled channels."""
-    
+
     def __init__(self, bot: Bot, db_pool: AsyncConnectionPool):
         self.bot = bot
         self.db_pool = db_pool
@@ -537,136 +468,107 @@ class ChannelRSSWorkerService:
         self.running = False
         self.monitor_task: Optional[asyncio.Task] = None
         self.monitor_interval = 60  # Check for changes every 60 seconds
-    
+
     async def start(self) -> None:
         """Start the worker service."""
         if self.running:
             logger.warning("ChannelRSSWorkerService is already running")
             return
-        
+
         self.running = True
-        
+
         # Initialize workers for all enabled channels
-        await self._sync_workers()
-        
+        await self.sync_workers()
+
         # Start monitoring task
         self.monitor_task = asyncio.create_task(self._monitor_channels())
-        
+
         logger.info(f"ChannelRSSWorkerService started with {len(self.workers)} active workers")
-    
+
     async def stop(self) -> None:
         """Stop the worker service."""
         if not self.running:
             return
-        
+
         self.running = False
-        
-        # Stop monitoring task
+
         if self.monitor_task:
             self.monitor_task.cancel()
             try:
                 await self.monitor_task
             except asyncio.CancelledError:
                 pass
-        
-        # Stop all workers
+
         await self._stop_all_workers()
-        
+
         logger.info("ChannelRSSWorkerService stopped")
-    
+
     async def _monitor_channels(self) -> None:
         """Monitor channels and sync workers periodically."""
         while self.running:
             try:
                 await asyncio.sleep(self.monitor_interval)
-                await self._sync_workers()
+                await self.sync_workers()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error(f"Error monitoring channels: {e}", exc_info=True)
-    
-    async def _sync_workers(self) -> None:
+
+    async def sync_workers(self) -> None:
         """Synchronize workers with enabled channels."""
         try:
             async with self.db_pool.connection() as raw_connection:
-                async with raw_connection.transaction():
-                    connection = PsycopgConnection(raw_connection)
-                    db = DB(connection)
-                    
-                    # Get all channels with parsing enabled
-                    enabled_channels = await db.channels.get_channels_with_parsing_enabled()
-                    
-                    if not enabled_channels:
-                        enabled_channels = []
-                    
-                    enabled_channel_ids = {channel.channel_id for channel in enabled_channels}
-                    current_worker_ids = set(self.workers.keys())
-                    
-                    # Start workers for new channels
-                    for channel in enabled_channels:
-                        if channel.channel_id not in current_worker_ids:
-                            # New channel - create and start worker
-                            worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
-                            await worker.start()
-                            self.workers[channel.channel_id] = worker
-                            logger.info(f"Started new worker for channel {channel.channel_id} ({channel.title})")
-                        else:
-                            # Existing channel - update settings
-                            worker = self.workers[channel.channel_id]
-                            await worker.update_settings(channel)
-                    
-                    # Stop workers for disabled channels
-                    for channel_id in current_worker_ids - enabled_channel_ids:
-                        worker = self.workers.pop(channel_id)
-                        await worker.stop()
-                        logger.info(f"Stopped worker for disabled channel {channel_id}")
-        
-        except pg_errors.UndefinedTable as e:
-            logger.warning(
-                f"Cannot sync workers: database table missing. "
-                f"Run migrations: python apply_migrations.py. Error: {e}"
-            )
+                db = DB(PsycopgConnection(raw_connection))
+                enabled_channels = await db.channels.get_channels_with_parsing_enabled() or []
+
+            enabled_channel_ids = {channel.channel_id for channel in enabled_channels}
+            current_worker_ids = set(self.workers.keys())
+
+            for channel in enabled_channels:
+                worker = self.workers.get(channel.channel_id)
+                if worker is None:
+                    worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
+                    await worker.start()
+                    self.workers[channel.channel_id] = worker
+                    logger.info(f"Started new worker for channel {channel.channel_id} ({channel.title})")
+                else:
+                    await worker.update_settings(channel)
+
+            for channel_id in current_worker_ids - enabled_channel_ids:
+                worker = self.workers.pop(channel_id)
+                await worker.stop()
+                logger.info(f"Stopped worker for disabled channel {channel_id}")
+
         except Exception as e:
             logger.error(f"Error syncing workers: {e}", exc_info=True)
-    
+
     async def _stop_all_workers(self) -> None:
         """Stop all active workers."""
-        for worker in self.workers.values():
-            await worker.stop()
+        await asyncio.gather(*(worker.stop() for worker in self.workers.values()))
         self.workers.clear()
-    
+
     async def reload_channel(self, channel_id: int) -> None:
         """Reload a specific channel's worker (useful after settings change)."""
         try:
             async with self.db_pool.connection() as raw_connection:
-                async with raw_connection.transaction():
-                    connection = PsycopgConnection(raw_connection)
-                    db = DB(connection)
-                    
-                    channel = await db.channels.get_channel(channel_id=channel_id)
-                    
-                    if not channel:
-                        logger.warning(f"Channel {channel_id} not found")
-                        return
-                    
-                    if channel.parsing_is_enabled:
-                        # Channel should be running
-                        if channel_id in self.workers:
-                            # Update existing worker
-                            await self.workers[channel_id].update_settings(channel)
-                        else:
-                            # Start new worker
-                            worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
-                            await worker.start()
-                            self.workers[channel_id] = worker
-                    else:
-                        # Channel should not be running
-                        if channel_id in self.workers:
-                            worker = self.workers.pop(channel_id)
-                            await worker.stop()
-        
-        except pg_errors.UndefinedTable as e:
-            logger.warning(
-                f"Cannot reload channel {channel_id}: database table missing. "
-                f"Run migrations: python apply_migrations.py. Error: {e}"
-            )
+                db = DB(PsycopgConnection(raw_connection))
+                channel = await db.channels.get_channel(channel_id=channel_id)
+
+            if not channel:
+                logger.warning(f"Channel {channel_id} not found")
+                return
+
+            if channel.parsing_is_enabled:
+                worker = self.workers.get(channel_id)
+                if worker:
+                    await worker.update_settings(channel)
+                else:
+                    worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
+                    await worker.start()
+                    self.workers[channel_id] = worker
+            elif channel_id in self.workers:
+                worker = self.workers.pop(channel_id)
+                await worker.stop()
+
         except Exception as e:
             logger.error(f"Error reloading channel {channel_id}: {e}", exc_info=True)

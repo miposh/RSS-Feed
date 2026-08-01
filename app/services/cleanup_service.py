@@ -2,7 +2,7 @@ import logging
 import asyncio
 import gc
 
-from psycopg import errors as pg_errors
+import psutil
 
 from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
 from app.infrastructure.database.db import DB
@@ -92,17 +92,11 @@ class CleanupService:
             collected = gc.collect()
             logger.info(f"Garbage collected {collected} objects")
 
-            # Log memory usage
-            try:
-                import psutil
-                process = psutil.Process()
-                mem_info = process.memory_info()
-                logger.info(
-                    f"Memory after cleanup: RSS={mem_info.rss / 1024 / 1024:.1f}MB, "
-                    f"VMS={mem_info.vms / 1024 / 1024:.1f}MB"
-                )
-            except ImportError:
-                pass
+            mem_info = psutil.Process().memory_info()
+            logger.info(
+                f"Memory after cleanup: RSS={mem_info.rss / 1024 / 1024:.1f}MB, "
+                f"VMS={mem_info.vms / 1024 / 1024:.1f}MB"
+            )
 
         except Exception as e:
             logger.error(f"Failed to restart browser: {e}", exc_info=True)
@@ -120,11 +114,6 @@ class CleanupService:
                     
                     count = await db.rss_posts.delete_older_than(days=days)
                     logger.info(f"Cleanup completed. Removed {count} old posts.")
-                    
-        except pg_errors.UndefinedTable:
-            logger.warning(
-                "Table 'rss_posts' does not exist. "
-                "Please run migrations: python apply_migrations.py"
-            )
+
         except Exception as e:
             logger.error(f"Failed to cleanup old posts: {e}", exc_info=True)

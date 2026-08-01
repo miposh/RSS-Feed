@@ -29,13 +29,12 @@ async def main():
         wrapped_connection = PsycopgConnection(connection)
         schema = DatabaseSchema(wrapped_connection)
         
-        await schema.apply_migrations()
-        
+        applied = await schema.apply_migrations()
+
         await connection.commit()
-        
-        logger.info("✓ Migration process completed successfully!")
-        logger.info("Don't forget to clear MIGRATIONS_TO_APPLY list in schema.py")
-        
+
+        logger.info(f"✓ Migration process completed successfully! ({len(applied)} applied)")
+
     except Exception as e:
         await connection.rollback()
         logger.error(f"✗ Migration failed: {e}")

@@ -13,13 +13,13 @@ class BaseTable:
         self.connection = connection
 
     def _log(self, action: str | BaseTableActionEnum, **kwargs: Any):
-        logger.info(
+        # DEBUG: this fires on every single query, which floods INFO logs.
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        logger.debug(
             "Table='%s', Action='%s', Details: %s",
             self.__tablename__,
             action,
             ", ".join(f"{k}={v}" for k, v in kwargs.items()),
         )
-
-    @property
-    def tablename(self) -> str:
-        return self.__tablename__

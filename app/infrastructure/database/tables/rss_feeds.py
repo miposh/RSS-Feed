@@ -34,11 +34,11 @@ class RSSFeedsTable(BaseTable):
         data: SingleQueryResult = await self.connection.insert_and_fetchone(
             sql="""
                 INSERT INTO rss_feeds(
-                    url, owner_user_id, title, description, site_url, 
+                    url, owner_user_id, title, description, site_url,
                     language, image_url, fetch_interval_sec, enabled
                 )
                 VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (url) DO UPDATE 
+                ON CONFLICT (url) DO UPDATE
                 SET title = COALESCE(EXCLUDED.title, rss_feeds.title),
                     description = COALESCE(EXCLUDED.description, rss_feeds.description),
                     site_url = COALESCE(EXCLUDED.site_url, rss_feeds.site_url),
@@ -62,18 +62,6 @@ class RSSFeedsTable(BaseTable):
         )
         self._log(RSSFeedsTableAction.DELETE, feed_id=feed_id)
 
-    async def get_feed(self, *, feed_id: int) -> RSSFeedModel | None:
-        """Get feed by id."""
-        data: SingleQueryResult = await self.connection.fetchone(
-            sql="""
-                SELECT * FROM rss_feeds WHERE id = %s
-            """,
-            params=(feed_id,),
-        )
-        feed_model = data.to_model(model=RSSFeedModel)
-        self._log(RSSFeedsTableAction.GET_FEED, feed_id=feed_id)
-        return feed_model
-
     async def get_feed_by_url(self, *, url: str) -> RSSFeedModel | None:
         """Get feed by URL."""
         data: SingleQueryResult = await self.connection.fetchone(
@@ -86,33 +74,40 @@ class RSSFeedsTable(BaseTable):
         self._log(RSSFeedsTableAction.GET_FEED_BY_URL, url=url)
         return feed_model
 
-    async def update_feed_metadata(
+    async def get_feeds_by_channel(
         self,
         *,
-        feed_id: int,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        site_url: Optional[str] = None,
-        language: Optional[str] = None,
-        image_url: Optional[str] = None,
-    ) -> RSSFeedModel | None:
-        """Update feed metadata."""
-        data: SingleQueryResult = await self.connection.update_and_fetchone(
-            sql="""
-                UPDATE rss_feeds
-                SET title = COALESCE(%s, title),
-                    description = COALESCE(%s, description),
-                    site_url = COALESCE(%s, site_url),
-                    language = COALESCE(%s, language),
-                    image_url = COALESCE(%s, image_url)
-                WHERE id = %s
-                RETURNING *;
+        channel_id: int,
+        enabled_only: bool = False,
+    ) -> list[RSSFeedModel]:
+        """Get every feed a channel is subscribed to, in one query.
+
+        Args:
+            channel_id: Internal ``channels.id``
+            enabled_only: Skip feeds that are disabled
+
+        Returns:
+            Feeds ordered newest first.
+        """
+        data: MultipleQueryResult = await self.connection.fetchmany(
+            sql=f"""
+                SELECT f.*
+                FROM rss_feeds f
+                JOIN feed_subscriptions fs ON fs.feed_id = f.id
+                WHERE fs.channel_id = %s
+                {"AND f.enabled = TRUE" if enabled_only else ""}
+                ORDER BY f.created_at DESC
             """,
-            params=(title, description, site_url, language, image_url, feed_id),
+            params=(channel_id,),
         )
-        feed_model = data.to_model(model=RSSFeedModel, raise_if_empty=True)
-        self._log(RSSFeedsTableAction.UPDATE_FEED_METADATA, feed_id=feed_id)
-        return feed_model
+        feeds = data.to_models(model=RSSFeedModel) or []
+        self._log(
+            RSSFeedsTableAction.GET_FEEDS_BY_CHANNEL,
+            channel_id=channel_id,
+            enabled_only=enabled_only,
+            count=len(feeds),
+        )
+        return feeds
 
     async def update_fetch_status(
         self,
@@ -122,14 +117,18 @@ class RSSFeedsTable(BaseTable):
         etag: Optional[str] = None,
         last_modified: Optional[datetime] = None,
     ) -> RSSFeedModel | None:
-        """Update feed fetch status."""
+        """Update feed fetch status.
+
+        ``etag`` and ``last_modified`` are only overwritten when the server sent
+        them, so a response without validators does not discard the cached ones.
+        """
         data: SingleQueryResult = await self.connection.update_and_fetchone(
             sql="""
                 UPDATE rss_feeds
                 SET last_fetched_at = NOW(),
                     last_status = %s,
-                    etag = %s,
-                    last_modified = %s
+                    etag = COALESCE(%s, etag),
+                    last_modified = COALESCE(%s, last_modified)
                 WHERE id = %s
                 RETURNING *;
             """,
@@ -168,76 +167,3 @@ class RSSFeedsTable(BaseTable):
         feed_model = data.to_model(model=RSSFeedModel, raise_if_empty=True)
         self._log(RSSFeedsTableAction.RESET_ERROR_COUNT, feed_id=feed_id)
         return feed_model
-
-    async def set_backoff(self, *, feed_id: int, backoff_until: datetime) -> RSSFeedModel | None:
-        """Set backoff timestamp."""
-        data: SingleQueryResult = await self.connection.update_and_fetchone(
-            sql="""
-                UPDATE rss_feeds
-                SET backoff_until = %s
-                WHERE id = %s
-                RETURNING *;
-            """,
-            params=(backoff_until, feed_id),
-        )
-        feed_model = data.to_model(model=RSSFeedModel, raise_if_empty=True)
-        self._log(RSSFeedsTableAction.SET_BACKOFF, feed_id=feed_id, backoff_until=backoff_until)
-        return feed_model
-
-    async def enable_feed(self, *, feed_id: int) -> RSSFeedModel | None:
-        """Enable feed."""
-        data: SingleQueryResult = await self.connection.update_and_fetchone(
-            sql="""
-                UPDATE rss_feeds
-                SET enabled = TRUE
-                WHERE id = %s
-                RETURNING *;
-            """,
-            params=(feed_id,),
-        )
-        feed_model = data.to_model(model=RSSFeedModel, raise_if_empty=True)
-        self._log(RSSFeedsTableAction.ENABLE_FEED, feed_id=feed_id)
-        return feed_model
-
-    async def disable_feed(self, *, feed_id: int) -> RSSFeedModel | None:
-        """Disable feed."""
-        data: SingleQueryResult = await self.connection.update_and_fetchone(
-            sql="""
-                UPDATE rss_feeds
-                SET enabled = FALSE
-                WHERE id = %s
-                RETURNING *;
-            """,
-            params=(feed_id,),
-        )
-        feed_model = data.to_model(model=RSSFeedModel, raise_if_empty=True)
-        self._log(RSSFeedsTableAction.DISABLE_FEED, feed_id=feed_id)
-        return feed_model
-
-    async def get_feeds_to_fetch(self) -> list[RSSFeedModel] | None:
-        """Get feeds that need to be fetched."""
-        data: MultipleQueryResult = await self.connection.fetchmany(
-            sql="""
-                SELECT * FROM rss_feeds
-                WHERE enabled = TRUE
-                AND (backoff_until IS NULL OR backoff_until < NOW())
-                AND (last_fetched_at IS NULL 
-                     OR last_fetched_at < NOW() - (fetch_interval_sec || ' seconds')::INTERVAL)
-                ORDER BY last_fetched_at NULLS FIRST
-            """,
-        )
-        feeds = data.to_models(model=RSSFeedModel)
-        self._log(RSSFeedsTableAction.GET_FEEDS_TO_FETCH, count=len(data) if data else 0)
-        return feeds
-
-    async def get_all_feeds(self) -> list[RSSFeedModel] | None:
-        """Get all feeds."""
-        data: MultipleQueryResult = await self.connection.fetchmany(
-            sql="""
-                SELECT * FROM rss_feeds
-                ORDER BY created_at DESC
-            """,
-        )
-        feeds = data.to_models(model=RSSFeedModel)
-        self._log(RSSFeedsTableAction.GET_ALL_FEEDS, count=len(data) if data else 0)
-        return feeds

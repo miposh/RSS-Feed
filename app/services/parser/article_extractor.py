@@ -2,6 +2,7 @@
 Article content extractor using configurable scrapers and newspaper4k.
 Fetches full article content from URLs and extracts clean text.
 """
+import asyncio
 import logging
 from typing import Optional, List
 
@@ -127,21 +128,8 @@ class ArticleExtractor:
             return None, []
 
     async def _parse_article(self, html: str, url: str) -> tuple[Optional[str], List[str]]:
-        import asyncio
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._parse_article_sync, html, url)
-
-
-# Global instance
-_article_extractor: Optional[ArticleExtractor] = None
-
-
-def get_article_extractor() -> ArticleExtractor:
-    """Get or create global ArticleExtractor instance."""
-    global _article_extractor
-    if _article_extractor is None:
-        _article_extractor = ArticleExtractor()
-    return _article_extractor
 
 
 # Cache extractors by (scraper_type, api_key) to reuse scrapers and FIFO queue

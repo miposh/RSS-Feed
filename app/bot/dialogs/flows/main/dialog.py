@@ -27,6 +27,7 @@ from app.bot.dialogs.flows.main.handlers import (
     on_global_set_api_key_clicked,
     on_global_settings_clicked,
     on_group_selected,
+    on_refresh_admins,
     on_interval_input,
     on_interval_preset_selected,
     on_list_sources,
@@ -233,6 +234,11 @@ rss_parser_dialog = Dialog(
             on_click=on_set_api_key_clicked,
         ),
         Button(
+            text=Const("👥 Обновить админов"),
+            id="refresh_admins_btn",
+            on_click=on_refresh_admins,
+        ),
+        Button(
             text=Const("← Назад"),
             id="back_to_group_menu_btn4",
             on_click=lambda c, w, m: m.switch_to(MainSG.group_menu),
@@ -376,25 +382,25 @@ rss_parser_dialog = Dialog(
     # ============ Global Settings Windows ============
     Window(
         Format(
-            "<b>🌐 Глобальные настройки</b>\n\n"
-            "Настройки применяются ко всем каналам сразу.\n\n"
+            "<b>🌐 Настройки ваших групп</b>\n\n"
+            "Настройки применяются ко всем вашим группам.\n\n"
             "<b>📊 Статистика:</b>\n"
-            "• Всего каналов: {total_channels}\n"
+            "• Всего групп: {total_channels}\n"
             "• Парсинг включен: {enabled_count}\n"
             "• Парсинг выключен: {disabled_count}"
         ),
         Button(
-            text=Const("✅ Включить парсинг для всех"),
+            text=Const("✅ Включить парсинг для всех групп"),
             id="global_enable_parsing_btn",
             on_click=on_global_enable_parsing,
         ),
         Button(
-            text=Const("❌ Выключить парсинг для всех"),
+            text=Const("❌ Выключить парсинг для всех групп"),
             id="global_disable_parsing_btn",
             on_click=on_global_disable_parsing,
         ),
         Button(
-            text=Const("🔑 Установить API ключ для всех"),
+            text=Const("🔑 Установить API ключ для всех групп"),
             id="global_set_api_key_btn",
             on_click=on_global_set_api_key_clicked,
         ),
@@ -409,9 +415,9 @@ rss_parser_dialog = Dialog(
     ),
     Window(
         Const(
-            "<b>🔑 Установить API ключ для всех каналов</b>\n\n"
-            "Отправьте API ключ ScraperAPI, который будет установлен для всех каналов.\n\n"
-            "Отправьте пустое сообщение или пробел, чтобы удалить API ключ у всех каналов."
+            "<b>🔑 Установить API ключ для всех групп</b>\n\n"
+            "Отправьте API ключ ScraperAPI, который будет установлен для всех ваших групп.\n\n"
+            "Отправьте пустое сообщение или пробел, чтобы удалить API ключ."
         ),
         MessageInput(
             func=on_global_api_key_input,

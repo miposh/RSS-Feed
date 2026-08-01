@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RSSFeedModel(BaseModel):
@@ -24,29 +24,8 @@ class RSSFeedModel(BaseModel):
     created_at: datetime = Field(..., description="Timestamp of feed creation")
     updated_at: datetime = Field(..., description="Timestamp of last update")
 
-    class Config:
-        from_attributes = True
-        frozen = True
-        extra = "forbid"
-        json_schema_extra = {
-            "example": {
-                "id": 1,
-                "url": "https://example.com/feed.xml",
-                "site_url": "https://example.com",
-                "title": "Example Feed",
-                "description": "An example RSS feed",
-                "language": "en",
-                "image_url": None,
-                "etag": None,
-                "last_modified": None,
-                "last_fetched_at": "2025-01-01T12:00:00+00:00",
-                "last_status": 200,
-                "error_count": 0,
-                "backoff_until": None,
-                "fetch_interval_sec": 900,
-                "enabled": True,
-                "owner_user_id": 1,
-                "created_at": "2025-01-01T12:00:00+00:00",
-                "updated_at": "2025-01-01T12:00:00+00:00",
-            }
-        }
+    model_config = ConfigDict(
+        from_attributes=True,
+        frozen=True,
+        extra="forbid",
+    )

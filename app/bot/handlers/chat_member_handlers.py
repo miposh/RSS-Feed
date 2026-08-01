@@ -1,13 +1,18 @@
+import html
 import logging
+
 from aiogram import Bot, Router
 from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_ADMIN, IS_MEMBER, MEMBER
 from aiogram.types import ChatMemberUpdated
 
 from app.infrastructure.database.db import DB
+from app.services.admin_service import SYNC_FAILED, sync_group_admins
 
 logger = logging.getLogger(__name__)
 
 chat_member_router = Router()
+
+SUPPORTED_CHAT_TYPES = ["group", "supergroup"]
 
 
 @chat_member_router.my_chat_member(
@@ -15,33 +20,51 @@ chat_member_router = Router()
 )
 async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> None:
     chat = event.chat
-    
+
     logger.info(
         f"my_chat_member event received: chat_type={chat.type}, chat_id={chat.id}, "
         f"from_user={event.from_user.id}, old_status={event.old_chat_member.status}, "
         f"new_status={event.new_chat_member.status}"
     )
-    
-    if chat.type not in ["group", "supergroup", "channel"]:
+
+    if chat.type not in SUPPORTED_CHAT_TYPES:
         logger.info(f"Skipping chat type: {chat.type}")
         return
-    
+
     new_status = event.new_chat_member
-    
+
     if new_status.status in ["administrator", "creator"]:
         logger.info(f"Bot added as admin to chat: {chat.id} ({chat.title})")
-        
+
         channel = await db.channels.add(
             channel_id=chat.id,
             username=chat.username,
             title=chat.title,
         )
-        
+
         if channel:
-            success_message = (
-                f"✅ Группа <b>{chat.title}</b> успешно подключена к боту.\n\n"
+            synced_count = await sync_group_admins(
+                bot=bot, db=db, chat_id=chat.id, internal_channel_id=channel.id,
             )
-            
+
+            if synced_count == SYNC_FAILED:
+                from_user = await db.users.add(
+                    user_id=event.from_user.id,
+                    username=event.from_user.username,
+                )
+                if from_user:
+                    await db.channel_admins.add(
+                        channel_id=channel.id, user_id=from_user.id,
+                    )
+                    synced_count = 1
+                    logger.info(f"Fallback: added {event.from_user.id} as sole admin for chat {chat.id}")
+
+            escaped_title = html.escape(chat.title or "")
+            success_message = (
+                f"✅ Группа <b>{escaped_title}</b> успешно подключена к боту.\n"
+                f"👥 Синхронизировано админов: {max(synced_count, 0)}\n"
+            )
+
             try:
                 await bot.send_message(
                     chat_id=event.from_user.id,
@@ -51,13 +74,13 @@ async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> N
                 logger.info(f"Successfully sent notification to user: {event.from_user.id}")
             except Exception as e:
                 logger.error(f"Failed to send notification to user {event.from_user.id}: {e}")
-                
+
             logger.info(f"Successfully connected group: {chat.title} (ID: {chat.id})")
         else:
             logger.error(f"Failed to save channel {chat.id} to database")
     else:
         logger.warning(f"Bot added without admin rights to chat: {chat.id} ({chat.title})")
-        
+
         warning_message = (
             "⚠️ <b>Недостаточно прав</b>\n\n"
             "Для корректной работы бота необходимо назначить его администратором группы "
@@ -67,7 +90,7 @@ async def on_bot_added_to_group(event: ChatMemberUpdated, bot: Bot, db: DB) -> N
             "➕ Удаление сообщений\n\n"
             "Пожалуйста, выдайте боту права администратора в настройках группы."
         )
-        
+
         try:
             await bot.send_message(
                 chat_id=chat.id,
@@ -86,7 +109,7 @@ async def on_bot_removed_from_group(event: ChatMemberUpdated, bot: Bot, db: DB) 
     
     logger.info(f"Bot removed from chat: chat_type={chat.type}, chat_id={chat.id}, from_user={event.from_user.id}")
     
-    if chat.type not in ["group", "supergroup"]:
+    if chat.type not in SUPPORTED_CHAT_TYPES:
         return
     
     logger.info(f"Bot removed from group: {chat.id} ({chat.title})")
@@ -95,8 +118,9 @@ async def on_bot_removed_from_group(event: ChatMemberUpdated, bot: Bot, db: DB) 
         await db.channels.delete(channel_id=chat.id)
         logger.info(f"Successfully deleted group from database: {chat.title} (ID: {chat.id})")
         
+        escaped_title = html.escape(chat.title or "")
         removal_message = (
-            f"❌ Группа <b>{chat.title}</b> была удалена из бота.\n\n"
+            f"❌ Группа <b>{escaped_title}</b> была удалена из бота.\n\n"
         )
         
         try:

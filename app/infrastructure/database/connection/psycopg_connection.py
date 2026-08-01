@@ -15,11 +15,18 @@ class PsycopgConnection(BaseConnection):
         connection.row_factory = dict_row
         self._connection = connection
 
+    def transaction(self):
+        """Open a nested transaction (savepoint) that can fail on its own.
+
+        Without this, one failing statement aborts the whole surrounding
+        transaction and every later query fails with ``InFailedSqlTransaction``.
+        """
+        return self._connection.transaction()
+
     async def execute(
         self,
         sql: str,
-        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
-        connection: Any | None = None,
+        params: tuple[Any, ...] | None = None,
     ) -> int:
         """Execute SQL and return number of affected rows."""
         async with self._connection.cursor() as cur:
@@ -29,19 +36,17 @@ class PsycopgConnection(BaseConnection):
     async def fetchone(
         self,
         sql: str,
-        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
-        connection: Any | None = None,
+        params: tuple[Any, ...] | None = None,
     ) -> SingleQueryResult:
         async with self._connection.cursor() as cur:
             await cur.execute(sql, params)
             row = await cur.fetchone()
-            return SingleQueryResult(row if row else None)
+            return SingleQueryResult(row)
 
     async def fetchmany(
         self,
         sql: str,
-        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
-        connection: Any | None = None,
+        params: tuple[Any, ...] | None = None,
     ) -> MultipleQueryResult:
         async with self._connection.cursor() as cur:
             await cur.execute(sql, params)
@@ -52,42 +57,12 @@ class PsycopgConnection(BaseConnection):
         self,
         sql: str,
         params: tuple[Any, ...],
-        connection: Any | None = None,
     ) -> SingleQueryResult:
-        async with self._connection.cursor() as cur:
-            await cur.execute(sql, params)
-            row = await cur.fetchone()
-            return SingleQueryResult(row if row else None)
-
-    async def insert_and_fetchmany(
-        self,
-        sql: str,
-        params: list[tuple[Any, ...]],
-        connection: Any | None = None,
-    ) -> MultipleQueryResult:
-        async with self._connection.cursor() as cur:
-            await cur.executemany(sql, params)
-            rows = await cur.fetchall()
-            return MultipleQueryResult(rows)
+        return await self.fetchone(sql, params)
 
     async def update_and_fetchone(
         self,
         sql: str,
         params: tuple[Any, ...],
-        connection: Any | None = None,
     ) -> SingleQueryResult:
-        async with self._connection.cursor() as cur:
-            await cur.execute(sql, params)
-            row = await cur.fetchone()
-            return SingleQueryResult(row if row else None)
-
-    async def update_and_fetchmany(
-        self,
-        sql: str,
-        params: list[tuple[Any, ...]],
-        connection: Any | None = None,
-    ) -> MultipleQueryResult:
-        async with self._connection.cursor() as cur:
-            await cur.executemany(sql, params)
-            rows = await cur.fetchall()
-            return MultipleQueryResult(rows)
+        return await self.fetchone(sql, params)

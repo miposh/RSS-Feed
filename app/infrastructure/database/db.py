@@ -4,9 +4,10 @@ from app.infrastructure.database.tables.channels import ChannelsTable
 from app.infrastructure.database.tables.rss_feeds import RSSFeedsTable
 from app.infrastructure.database.tables.rss_posts import RSSPostsTable
 from app.infrastructure.database.tables.feed_subscriptions import FeedSubscriptionsTable
+from app.infrastructure.database.tables.channel_admins import ChannelAdminsTable
 
 
-class DB:    
+class DB:
     def __init__(self, connection: BaseConnection) -> None:
         self.connection = connection
         self.users = UsersTable(connection=connection)
@@ -14,3 +15,4 @@ class DB:
         self.rss_feeds = RSSFeedsTable(connection=connection)
         self.rss_posts = RSSPostsTable(connection=connection)
         self.feed_subscriptions = FeedSubscriptionsTable(connection=connection)
+        self.channel_admins = ChannelAdminsTable(connection=connection)

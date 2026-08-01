@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 ScraperTypeValue = Literal["scraperapi", "botasaurus"]
@@ -19,16 +19,8 @@ class ChannelModel(BaseModel):
     scraper_api_key: Optional[str] = Field(None, description="API key for scraper service (required for scraperapi)")
     created_at: datetime = Field(..., description="Timestamp of channel creation")
 
-    class Config:
-        from_attributes = True
-        frozen = True
-        extra = "forbid"
-        json_schema_extra = {
-            "example": {
-                "id": 1,
-                "channel_id": -1001234567890,
-                "username": "my_channel",
-                "title": "My Channel",
-                "created_at": "2025-01-01T12:00:00+00:00",
-            }
-        }
+    model_config = ConfigDict(
+        from_attributes=True,
+        frozen=True,
+        extra="forbid",
+    )

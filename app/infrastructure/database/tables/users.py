@@ -39,63 +39,29 @@ class UsersTable(BaseTable):
         )
         return user_model
 
-    async def delete(self, *, user_id: int) -> None:
-        await self.connection.execute(
-            sql="""
-                DELETE FROM users WHERE user_id = %s;
-            """,
-            params=(user_id,),
-        )
-        self._log(UsersTableAction.DELETE, user_id=user_id)
+    async def add_many(self, *, users: list[tuple[int, str | None]]) -> list[int]:
+        """Upsert several users at once.
 
-    async def get_user(self, *, user_id: int) -> UserModel | None:
-        data: SingleQueryResult = await self.connection.fetchone(
-            sql="""
-                SELECT id, user_id, username, created_at, updated_at
-                FROM users
-                WHERE user_id = %s
-            """,
-            params=(user_id,),
-        )
-        user_model = data.to_model(model=UserModel)
-        self._log(UsersTableAction.GET_USER, user_id=user_id)
-        return user_model
+        Args:
+            users: ``(telegram_user_id, username)`` pairs
 
-    async def get_user_by_username(self, *, username: str) -> UserModel | None:
-        data: SingleQueryResult = await self.connection.fetchone(
-            sql="""
-                SELECT id, user_id, username, created_at, updated_at
-                FROM users
-                WHERE username = %s
-            """,
-            params=(username,),
-        )
-        user_model = data.to_model(model=UserModel)
-        self._log(UsersTableAction.GET_USER_BY_USERNAME, username=username)
-        return user_model
+        Returns:
+            Internal ``users.id`` values for the given users.
+        """
+        deduplicated = dict(users)
 
-    async def update_username(self, *, user_id: int, username: str) -> UserModel | None:
-        data: SingleQueryResult = await self.connection.update_and_fetchone(
-            sql="""
-                UPDATE users
-                SET username = %s
-                WHERE user_id = %s
-                RETURNING *;
-            """,
-            params=(username, user_id),
-        )
-        user_model = data.to_model(model=UserModel, raise_if_empty=True)
-        self._log(UsersTableAction.UPDATE_USERNAME, user_id=user_id, username=username)
-        return user_model
+        if not deduplicated:
+            return []
 
-    async def get_all_users(self) -> list[UserModel] | None:
         data: MultipleQueryResult = await self.connection.fetchmany(
             sql="""
-                SELECT id, user_id, username, created_at, updated_at
-                FROM users
-                ORDER BY created_at DESC
+                INSERT INTO users(user_id, username)
+                SELECT * FROM UNNEST(%s::bigint[], %s::varchar[])
+                ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
+                RETURNING id;
             """,
+            params=(list(deduplicated.keys()), list(deduplicated.values())),
         )
-        users = data.to_models(model=UserModel)
-        self._log(UsersTableAction.GET_ALL_USERS, count=len(data) if data else 0)
-        return users
+        user_ids = [row["id"] for row in data.data]
+        self._log(UsersTableAction.ADD, count=len(user_ids))
+        return user_ids

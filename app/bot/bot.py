@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 
@@ -9,14 +10,18 @@ from aiogram_dialog import setup_dialogs
 
 from config.config import get_config, LogsConfig
 from app.infrastructure.database.connection.connect_to_pg import get_pg_pool
+from app.infrastructure.database.connection.psycopg_connection import PsycopgConnection
+from app.infrastructure.database.schema import DatabaseSchema
 from app.bot.middlewares.chat_type_middleware import ChatTypeMiddleware
 from app.bot.middlewares.error_middleware import ErrorHandlingMiddleware
 from app.bot.middlewares.user_tracking import UserTrackingMiddleware
 from app.bot.middlewares.database import DataBaseMiddleware
 from app.bot.dialogs.flows import dialogs
 from app.bot.handlers import routers
+from app.services.admin_service import backfill_channel_admins
 from app.services.channel_rss_worker import ChannelRSSWorkerService
 from app.services.cleanup_service import CleanupService
+from app.services.fetcher.http_client import close_http_client
 from app.services.message_queue import start_message_queue, stop_message_queue
 
 
@@ -43,7 +48,15 @@ def setup_logging(logs_config: LogsConfig) -> None:
 
 logger = logging.getLogger(__name__)
 
-async def on_startup(bot: Bot, db_pool) -> tuple[ChannelRSSWorkerService, CleanupService]:
+async def apply_migrations(db_pool) -> None:
+    """Bring the database schema up to date before anything queries it."""
+    async with db_pool.connection() as raw_connection:
+        async with raw_connection.transaction():
+            schema = DatabaseSchema(PsycopgConnection(raw_connection))
+            await schema.apply_migrations()
+
+
+async def on_startup(bot: Bot, db_pool) -> tuple[ChannelRSSWorkerService, CleanupService, asyncio.Task]:
     logger.info("Bot is starting...")
 
     # Start the message queue (must start before workers)
@@ -58,12 +71,25 @@ async def on_startup(bot: Bot, db_pool) -> tuple[ChannelRSSWorkerService, Cleanu
     cleanup_service = CleanupService(db_pool)
     await cleanup_service.start()
 
+    # Backfill admins for groups added before admin tracking existed. Runs in the
+    # background because it makes one Telegram API call per group.
+    backfill_task = asyncio.create_task(backfill_channel_admins(bot, db_pool))
+
     logger.info("Bot started successfully")
-    return channel_worker_service, cleanup_service
+    return channel_worker_service, cleanup_service, backfill_task
 
 
-async def on_shutdown(bot: Bot, channel_worker_service=None, cleanup_service=None, db_pool=None) -> None:
+async def on_shutdown(
+    bot: Bot,
+    channel_worker_service=None,
+    cleanup_service=None,
+    db_pool=None,
+    backfill_task: asyncio.Task | None = None,
+) -> None:
     logger.info("Bot is shutting down...")
+
+    if backfill_task and not backfill_task.done():
+        backfill_task.cancel()
 
     if channel_worker_service:
         await channel_worker_service.stop()
@@ -74,6 +100,8 @@ async def on_shutdown(bot: Bot, channel_worker_service=None, cleanup_service=Non
     # Stop message queue (after workers)
     await stop_message_queue()
     logger.info("Message queue stopped")
+
+    await close_http_client()
 
     if db_pool:
         await db_pool.close()
@@ -123,14 +151,17 @@ async def main() -> None:
     
     channel_worker_service = None
     cleanup_service = None
+    backfill_task = None
 
     try:
+        await apply_migrations(db_pool)
+
         dp["db_pool"] = db_pool
-        channel_worker_service, cleanup_service = await on_startup(bot, db_pool)
-        dp["channel_worker_service"] = channel_worker_service 
+        channel_worker_service, cleanup_service, backfill_task = await on_startup(bot, db_pool)
+        dp["channel_worker_service"] = channel_worker_service
         await start_polling(dp, bot)
     except Exception as e:
         logger.error(f"Error starting bot: {e}", exc_info=True)
     finally:
-        await on_shutdown(bot, channel_worker_service, cleanup_service, db_pool)
+        await on_shutdown(bot, channel_worker_service, cleanup_service, db_pool, backfill_task)
         await bot.session.close()

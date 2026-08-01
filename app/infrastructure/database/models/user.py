@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserModel(BaseModel):
@@ -11,16 +11,8 @@ class UserModel(BaseModel):
     created_at: datetime = Field(..., description="Timestamp of account creation")
     updated_at: datetime = Field(..., description="Timestamp of last update")
 
-    class Config:
-        from_attributes = True
-        frozen = True
-        extra = "forbid"
-        json_schema_extra = {
-            "example": {
-                "id": 1,
-                "user_id": 123456789,
-                "username": "john_doe",
-                "created_at": "2025-01-01T12:00:00+00:00",
-                "updated_at": "2025-01-01T12:00:00+00:00",
-            }
-        }
+    model_config = ConfigDict(
+        from_attributes=True,
+        frozen=True,
+        extra="forbid",
+    )

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RSSPostModel(BaseModel):
@@ -22,27 +22,8 @@ class RSSPostModel(BaseModel):
     is_sent: bool = Field(False, description="Whether post has been sent")
     sent_at: Optional[datetime] = Field(None, description="When post was sent")
 
-    class Config:
-        from_attributes = True
-        frozen = True
-        extra = "forbid"
-        json_schema_extra = {
-            "example": {
-                "id": 1,
-                "feed_id": 1,
-                "guid": "https://example.com/post/123",
-                "link": "https://example.com/post/123",
-                "title": "Example Post",
-                "summary": "This is an example post",
-                "content_html": "<p>This is an example post</p>",
-                "author": "John Doe",
-                "published_at": "2025-01-01T12:00:00+00:00",
-                "created_at": "2025-01-01T12:00:00+00:00",
-                "fetched_at": "2025-01-01T12:00:00+00:00",
-                "content_hash": "abc123",
-                "media_urls": {"images": ["https://example.com/image.jpg"]},
-                "tags": {"categories": ["tech", "news"]},
-                "is_sent": False,
-                "sent_at": None,
-            }
-        }
+    model_config = ConfigDict(
+        from_attributes=True,
+        frozen=True,
+        extra="forbid",
+    )

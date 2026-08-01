@@ -1,4 +1,4 @@
-botasaurus
-fastapi
-uvicorn[standard]
-pydantic
+botasaurus==4.0.97
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+pydantic==2.13.4

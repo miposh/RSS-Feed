@@ -9,6 +9,7 @@ Telegram API limits:
 
 import asyncio
 import logging
+import re
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -201,7 +202,7 @@ class MessageQueue:
 
                             # Put message back in queue with lower priority
                             async with self.queue_lock:
-                                message.priority = min(message.priority - 1, -10)
+                                message.priority = max(message.priority - 1, -10)
                                 self.queue.append(message)
 
                             # Wait the specified time
@@ -257,8 +258,6 @@ class MessageQueue:
 
         Example: "Flood control exceeded. Retry in 34 seconds"
         """
-        import re
-
         # Try to find "retry after X" or "retry in X"
         patterns = [
             r"retry\s+after\s+(\d+)",

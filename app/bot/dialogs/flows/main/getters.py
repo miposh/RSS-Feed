@@ -6,8 +6,9 @@ from app.services.chat_service import ChatService
 
 
 async def get_rss_parser_data(dialog_manager: DialogManager, db: DB, bot: Bot, **kwargs) -> dict:
-    """Get data for RSS parser dialog including list of groups."""
-    channels = await db.channels.get_all_channels()
+    """Get data for RSS parser dialog including list of groups where user is admin."""
+    user_id = dialog_manager.event.from_user.id
+    channels = await db.channels.get_channels_for_admin(telegram_user_id=user_id)
     
     group_buttons = []
     if channels:
@@ -72,14 +73,10 @@ async def get_sources_list_data(dialog_manager: DialogManager, db: DB, **kwargs)
             "sources_count": 0,
         }
     
-    # Get feeds for this channel
+    # Get feeds for this channel (already newest first)
     chat_service = ChatService(db)
     feeds = await chat_service.get_chat_feeds(channel_id=int(selected_channel_id))
-    
-    # Sort feeds by creation date (newest first)
-    if feeds:
-        feeds = sorted(feeds, key=lambda f: f.created_at, reverse=True)
-    
+
     # Format sources for display
     sources_list = []
     if feeds:
@@ -112,14 +109,10 @@ async def get_remove_source_data(dialog_manager: DialogManager, db: DB, **kwargs
             "source_buttons": [],
         }
     
-    # Get feeds for this channel
+    # Get feeds for this channel (already newest first)
     chat_service = ChatService(db)
     feeds = await chat_service.get_chat_feeds(channel_id=int(selected_channel_id))
-    
-    # Sort feeds by creation date (newest first)
-    if feeds:
-        feeds = sorted(feeds, key=lambda f: f.created_at, reverse=True)
-    
+
     # Format sources as buttons (title, feed_id)
     # Use feed.id instead of URL to avoid BUTTON_DATA_INVALID error
     # (Telegram limits callback_data to 64 bytes)
@@ -200,8 +193,9 @@ async def get_channel_settings_data(dialog_manager: DialogManager, db: DB, **kwa
 
 
 async def get_global_settings_data(dialog_manager: DialogManager, db: DB, **kwargs) -> dict:
-    """Get data for global settings window."""
-    channels = await db.channels.get_all_channels()
+    """Get data for global settings window (scoped to user's admin groups)."""
+    user_id = dialog_manager.event.from_user.id
+    channels = await db.channels.get_channels_for_admin(telegram_user_id=user_id)
     
     if not channels:
         return {

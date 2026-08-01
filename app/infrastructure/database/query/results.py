@@ -23,9 +23,6 @@ class SingleQueryResult:
             return None
         return model(**self._data)
 
-    def as_dict(self) -> dict[str, Any]:
-        return self._data
-
     def __bool__(self) -> bool:
         return bool(self._data)
 
@@ -57,14 +54,6 @@ class MultipleQueryResult:
                 raise ValueError("Cannot convert empty result to models")
             return None
         return [model(**row) for row in self._data]
-
-    def first(self) -> SingleQueryResult:
-        return (
-            SingleQueryResult(self._data[0]) if self._data else SingleQueryResult(None)
-        )
-
-    def as_dicts(self) -> list[dict[str, Any]]:
-        return self._data
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         return iter(self._data)

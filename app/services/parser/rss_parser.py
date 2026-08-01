@@ -1,6 +1,7 @@
 """
 RSS feed parser with encoding detection and error handling.
 """
+import asyncio
 import logging
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -258,8 +259,6 @@ async def parse_rss_feed(content_bytes: bytes) -> Optional[List[RSSPost]]:
     Runs CPU-bound feedparser.parse() in a thread pool executor
     to avoid blocking the event loop.
     """
-    import asyncio
-    
     content = RSSParser.decode_content(content_bytes)
     
     # Run synchronous feedparser.parse() in executor to avoid blocking

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FeedSubscriptionModel(BaseModel):
@@ -9,15 +9,8 @@ class FeedSubscriptionModel(BaseModel):
     channel_id: int = Field(..., description="Channel reference")
     created_at: datetime = Field(..., description="Timestamp of subscription creation")
 
-    class Config:
-        from_attributes = True
-        frozen = True
-        extra = "forbid"
-        json_schema_extra = {
-            "example": {
-                "id": 1,
-                "feed_id": 1,
-                "channel_id": 1,
-                "created_at": "2025-01-01T12:00:00+00:00",
-            }
-        }
+    model_config = ConfigDict(
+        from_attributes=True,
+        frozen=True,
+        extra="forbid",
+    )
