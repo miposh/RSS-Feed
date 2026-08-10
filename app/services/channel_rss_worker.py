@@ -31,6 +31,10 @@ MAX_CONCURRENT_FEEDS = 5
 TELEGRAM_CAPTION_LIMIT = 1024
 TELEGRAM_MESSAGE_LIMIT = 4080
 
+# Backoff after a failed feed check, so a persistently broken channel
+# (bad interval_time, DB down) retries instead of spinning or dying.
+DEFAULT_ERROR_BACKOFF_SECONDS = 60
+
 # Placeholder bodies that carry no information and should be dropped.
 USELESS_CONTENT_REGEX = re.compile(
     r"^\s*(none|null|\[mehr\]|\[more\]|read more|weiterlesen|lire la suite"
@@ -72,16 +76,20 @@ def format_post_message(post: RSSPost) -> str:
     if text_to_use and not _is_useless_content(text_to_use):
         clean_text = html.escape(_clean_html(text_to_use))
 
-        # Reserve room for the title, the link and the timestamp.
-        max_content_length = TELEGRAM_MESSAGE_LIMIT - len(message) - 150
+        # Reserve room for the title, the link and the timestamp. Clamp at 0:
+        # a huge title would otherwise make this negative and clean_text[:-N]
+        # would keep almost the whole body instead of truncating it.
+        max_content_length = max(0, TELEGRAM_MESSAGE_LIMIT - len(message) - 150)
 
         if len(clean_text) > max_content_length:
-            clean_text = clean_text[:max_content_length - 3] + "..."
+            clean_text = clean_text[:max(0, max_content_length - 3)] + "..."
 
         message += f"{clean_text}\n\n"
 
     if post.link:
-        message += f"<a href='{post.link}'>Читать полностью</a>\n\n"
+        # Escaped: feed URLs routinely carry & in query strings, which would
+        # otherwise make Telegram reject the whole message as unparseable HTML.
+        message += f'<a href="{html.escape(post.link, quote=True)}">Читать полностью</a>\n\n'
 
     if post.published_time:
         message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
@@ -206,14 +214,18 @@ class ChannelRSSWorker:
         while self.running:
             try:
                 await self._check_channel_feeds()
+                # Sleep inside the try: a bad interval_time (None / non-numeric
+                # column) would otherwise kill the loop while self.running stays
+                # True, so the channel goes silent with nothing to restart it.
+                await asyncio.sleep(self.channel.interval_time)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(
                     f"Error checking feeds for channel {self.channel.channel_id}: {e}",
                     exc_info=True
                 )
-
-            # Wait for the configured interval
-            await asyncio.sleep(self.channel.interval_time)
+                await asyncio.sleep(DEFAULT_ERROR_BACKOFF_SECONDS)
 
     async def _check_channel_feeds(self) -> None:
         """Check all enabled RSS feeds subscribed by this channel."""
@@ -372,6 +384,11 @@ class ChannelRSSWorker:
                         disable_web_page_preview=True
                     )
 
+                # Marked only after Telegram accepted it. Marking at enqueue time
+                # would drop the post permanently on any send failure, since
+                # get_sent_guids would filter it out on the next pass.
+                await self._mark_post_sent(feed_id=feed_id, post=post)
+
                 logger.info(
                     f"Sent post to channel {self.channel.channel_id} ({self.channel.title}): {post.title[:50]}"
                 )
@@ -401,8 +418,6 @@ class ChannelRSSWorker:
         )
 
         logger.debug(f"Enqueued post for channel {self.channel.channel_id}: {post.title[:50]}")
-
-        await self._mark_post_sent(feed_id=feed_id, post=post)
 
     async def _enrich_with_article(self, post: RSSPost) -> None:
         """Replace RSS excerpt with the full article text, when the scraper can get it."""
@@ -468,6 +483,10 @@ class ChannelRSSWorkerService:
         self.running = False
         self.monitor_task: Optional[asyncio.Task] = None
         self.monitor_interval = 60  # Check for changes every 60 seconds
+        # Serialises sync_workers/reload_channel: both await a DB round-trip
+        # before checking self.workers, so without it two callers can each see
+        # "no worker" and start a duplicate that nothing ever stops.
+        self._workers_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start the worker service."""
@@ -517,27 +536,28 @@ class ChannelRSSWorkerService:
     async def sync_workers(self) -> None:
         """Synchronize workers with enabled channels."""
         try:
-            async with self.db_pool.connection() as raw_connection:
-                db = DB(PsycopgConnection(raw_connection))
-                enabled_channels = await db.channels.get_channels_with_parsing_enabled() or []
+            async with self._workers_lock:
+                async with self.db_pool.connection() as raw_connection:
+                    db = DB(PsycopgConnection(raw_connection))
+                    enabled_channels = await db.channels.get_channels_with_parsing_enabled() or []
 
-            enabled_channel_ids = {channel.channel_id for channel in enabled_channels}
-            current_worker_ids = set(self.workers.keys())
+                enabled_channel_ids = {channel.channel_id for channel in enabled_channels}
+                current_worker_ids = set(self.workers.keys())
 
-            for channel in enabled_channels:
-                worker = self.workers.get(channel.channel_id)
-                if worker is None:
-                    worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
-                    await worker.start()
-                    self.workers[channel.channel_id] = worker
-                    logger.info(f"Started new worker for channel {channel.channel_id} ({channel.title})")
-                else:
-                    await worker.update_settings(channel)
+                for channel in enabled_channels:
+                    worker = self.workers.get(channel.channel_id)
+                    if worker is None:
+                        worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
+                        await worker.start()
+                        self.workers[channel.channel_id] = worker
+                        logger.info(f"Started new worker for channel {channel.channel_id} ({channel.title})")
+                    else:
+                        await worker.update_settings(channel)
 
-            for channel_id in current_worker_ids - enabled_channel_ids:
-                worker = self.workers.pop(channel_id)
-                await worker.stop()
-                logger.info(f"Stopped worker for disabled channel {channel_id}")
+                for channel_id in current_worker_ids - enabled_channel_ids:
+                    worker = self.workers.pop(channel_id)
+                    await worker.stop()
+                    logger.info(f"Stopped worker for disabled channel {channel_id}")
 
         except Exception as e:
             logger.error(f"Error syncing workers: {e}", exc_info=True)
@@ -550,25 +570,26 @@ class ChannelRSSWorkerService:
     async def reload_channel(self, channel_id: int) -> None:
         """Reload a specific channel's worker (useful after settings change)."""
         try:
-            async with self.db_pool.connection() as raw_connection:
-                db = DB(PsycopgConnection(raw_connection))
-                channel = await db.channels.get_channel(channel_id=channel_id)
+            async with self._workers_lock:
+                async with self.db_pool.connection() as raw_connection:
+                    db = DB(PsycopgConnection(raw_connection))
+                    channel = await db.channels.get_channel(channel_id=channel_id)
 
-            if not channel:
-                logger.warning(f"Channel {channel_id} not found")
-                return
+                if not channel:
+                    logger.warning(f"Channel {channel_id} not found")
+                    return
 
-            if channel.parsing_is_enabled:
-                worker = self.workers.get(channel_id)
-                if worker:
-                    await worker.update_settings(channel)
-                else:
-                    worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
-                    await worker.start()
-                    self.workers[channel_id] = worker
-            elif channel_id in self.workers:
-                worker = self.workers.pop(channel_id)
-                await worker.stop()
+                if channel.parsing_is_enabled:
+                    worker = self.workers.get(channel_id)
+                    if worker:
+                        await worker.update_settings(channel)
+                    else:
+                        worker = ChannelRSSWorker(channel, self.bot, self.db_pool)
+                        await worker.start()
+                        self.workers[channel_id] = worker
+                elif channel_id in self.workers:
+                    worker = self.workers.pop(channel_id)
+                    await worker.stop()
 
         except Exception as e:
             logger.error(f"Error reloading channel {channel_id}: {e}", exc_info=True)

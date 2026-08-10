@@ -122,9 +122,14 @@ class RSSParser:
                 post = RSSParser._parse_entry(entry)
                 posts.append(post)
             except Exception as e:
+                # getattr can itself raise here, which would defeat the skip.
+                try:
+                    entry_title = getattr(entry, 'title', 'Unknown')
+                except Exception:
+                    entry_title = 'Unknown'
                 logger.warning(
                     f"Failed to parse entry: {e}",
-                    extra={"entry_title": getattr(entry, 'title', 'Unknown')},
+                    extra={"entry_title": entry_title},
                     exc_info=True
                 )
                 continue

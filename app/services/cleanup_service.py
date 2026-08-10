@@ -88,8 +88,9 @@ class CleanupService:
             _get_fetch_html_func.cache_clear()
             logger.info("Cleared browser function cache")
 
-            # Force garbage collection
-            collected = gc.collect()
+            # Off-thread: a full collect on a browser-scraping heap stalls the
+            # event loop for hundreds of ms, freezing workers and bot polling.
+            collected = await asyncio.to_thread(gc.collect)
             logger.info(f"Garbage collected {collected} objects")
 
             mem_info = psutil.Process().memory_info()

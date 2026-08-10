@@ -92,6 +92,9 @@ class HTTPClient:
         if self._session and not self._session.is_closed:
             await self._session.aclose()
             logger.info("HTTP client closed")
+        # Cleared so fetch() rebuilds it; otherwise every later request raises
+        # "Cannot send a request, as the client has been closed".
+        self._session = None
 
     def _get_domain_semaphore(self, domain: str) -> asyncio.Semaphore:
         if domain not in self._domain_semaphores:
