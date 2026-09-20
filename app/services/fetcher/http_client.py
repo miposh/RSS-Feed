@@ -178,18 +178,21 @@ class HTTPClient:
                     )
 
             except (httpx.HTTPError, httpx.TimeoutException, asyncio.TimeoutError) as e:
+                # Named: httpx raises ConnectTimeout and friends with an empty
+                # str(), which rendered as a bare "Client error:" with no cause.
+                reason = f"{type(e).__name__}: {e}".rstrip(": ")
                 if attempt == self.max_retries - 1:
                     logger.error(
                         f"Client error after {self.max_retries} attempts: {url}",
-                        extra={"url": url, "error": str(e)},
+                        extra={"url": url, "error": reason},
                         exc_info=True
                     )
-                    return FetchResult(None, 0, f"Client error: {e}")
+                    return FetchResult(None, 0, f"Client error: {reason}")
 
                 backoff = self.base_backoff * (2 ** attempt) + random.uniform(0, 1)
                 logger.warning(
                     f"Client error on attempt {attempt + 1}/{self.max_retries}, retrying in {backoff:.2f}s: {url}",
-                    extra={"url": url, "attempt": attempt + 1, "backoff": backoff, "error": str(e)}
+                    extra={"url": url, "attempt": attempt + 1, "backoff": backoff, "error": reason}
                 )
                 await asyncio.sleep(backoff)
 

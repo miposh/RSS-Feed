@@ -66,35 +66,49 @@ def _is_useless_content(text: str) -> bool:
     return len(cleaned) < MIN_CONTENT_LENGTH or bool(USELESS_CONTENT_REGEX.match(cleaned))
 
 
-def format_post_message(post: RSSPost) -> str:
-    """Render a post as a Telegram HTML message."""
+def format_post_message(post: RSSPost, limit: int = TELEGRAM_MESSAGE_LIMIT) -> str:
+    """Render a post as a Telegram HTML message that fits within ``limit``.
+
+    The caller must never slice the result. Cutting the rendered HTML splits a
+    tag and Telegram rejects the whole message ("Can't find end tag
+    corresponding to start tag", "Unclosed end tag at byte offset N"), so a
+    photo caption has to be built at TELEGRAM_CAPTION_LIMIT from the start.
+    Only the plain-text body is shortened; the title and link stay intact.
+    """
     title = html.escape(_clean_html(post.title))
-    message = f"<b>{title}</b>\n\n"
+    header = f"<b>{title}</b>\n\n"
 
-    text_to_use = post.content or post.summary
-
-    if text_to_use and not _is_useless_content(text_to_use):
-        clean_text = html.escape(_clean_html(text_to_use))
-
-        # Reserve room for the title, the link and the timestamp. Clamp at 0:
-        # a huge title would otherwise make this negative and clean_text[:-N]
-        # would keep almost the whole body instead of truncating it.
-        max_content_length = max(0, TELEGRAM_MESSAGE_LIMIT - len(message) - 150)
-
-        if len(clean_text) > max_content_length:
-            clean_text = clean_text[:max(0, max_content_length - 3)] + "..."
-
-        message += f"{clean_text}\n\n"
-
+    tail = ""
     if post.link:
         # Escaped: feed URLs routinely carry & in query strings, which would
         # otherwise make Telegram reject the whole message as unparseable HTML.
-        message += f'<a href="{html.escape(post.link, quote=True)}">Читать полностью</a>\n\n'
+        tail += f'<a href="{html.escape(post.link, quote=True)}">Читать полностью</a>\n\n'
 
     if post.published_time:
-        message += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
+        tail += f"<i>📅 {post.published_time.strftime('%Y-%m-%d %H:%M')}</i>"
 
-    return message
+    body = ""
+    text_to_use = post.content or post.summary
+
+    if text_to_use and not _is_useless_content(text_to_use):
+        # Budgeted against the real header and tail rather than a fixed
+        # reserve: a long feed URL used to push the finished caption past the
+        # limit. Measuring the raw HTML overshoots (Telegram counts the parsed
+        # text, not the markup), which errs towards a shorter body.
+        # Clamp at 0: a huge title would otherwise make this negative and
+        # clean_text[:-N] would keep almost the whole body instead.
+        max_content_length = max(0, limit - len(header) - len(tail) - 2)
+
+        # Truncated before escaping, so the cut can never land inside an
+        # entity like &amp; and leave Telegram a malformed one.
+        clean_text = _clean_html(text_to_use)
+        if len(clean_text) > max_content_length:
+            clean_text = clean_text[:max(0, max_content_length - 3)] + "..."
+
+        if clean_text:
+            body = f"{html.escape(clean_text)}\n\n"
+
+    return header + body + tail
 
 
 def _parse_http_date(value: Optional[str]) -> Optional[datetime]:
@@ -347,7 +361,6 @@ class ChannelRSSWorker:
             await self._enrich_with_article(post)
 
         image_url = post.image_urls[0] if post.image_urls else None
-        message = format_post_message(post)
 
         # Pre-download the image so Telegram gets it from us with a browser
         # User-Agent, instead of fetching the URL itself and hitting a 403.
@@ -366,13 +379,21 @@ class ChannelRSSWorker:
             except Exception as e:
                 logger.warning(f"Error downloading image {image_url}: {e}")
 
+        # Built only now: the caption limit applies only if the image actually
+        # downloaded, and the message has to be rendered to fit that limit
+        # rather than sliced down to it afterwards.
+        message = format_post_message(
+            post,
+            limit=TELEGRAM_CAPTION_LIMIT if image_data else TELEGRAM_MESSAGE_LIMIT,
+        )
+
         async def send_message():
             try:
                 if image_data:
                     await self.bot.send_photo(
                         chat_id=self.channel.channel_id,
                         photo=image_data,
-                        caption=message[:TELEGRAM_CAPTION_LIMIT],
+                        caption=message,
                         parse_mode="HTML",
                         show_caption_above_media=False
                     )

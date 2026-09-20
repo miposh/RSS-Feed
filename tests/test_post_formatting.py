@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.services.channel_rss_worker import (
+    TELEGRAM_CAPTION_LIMIT,
     TELEGRAM_MESSAGE_LIMIT,
     _clean_html,
     _is_useless_content,
@@ -92,3 +93,56 @@ class TestFormatPostMessage:
         post = make_post(title="Т" * 5000, content="я" * 20000)
         msg = format_post_message(post)
         assert "я" * 100 not in msg
+
+
+class TestCaptionLimit:
+    """Regression: the caption used to be message[:1024], which sliced the
+    rendered HTML mid-tag. Telegram answered "Can't find end tag corresponding
+    to start tag \"a\"" / "Unclosed end tag at byte offset N" and the post was
+    never delivered."""
+
+    def _assert_tags_balanced(self, msg: str) -> None:
+        for tag in ("b", "a", "i"):
+            assert msg.count(f"<{tag}") == msg.count(f"</{tag}>"), f"<{tag}> unbalanced in: {msg!r}"
+
+    def test_caption_keeps_the_link_tag_whole(self):
+        post = make_post(content="я" * 20000)
+        msg = format_post_message(post, limit=TELEGRAM_CAPTION_LIMIT)
+        assert len(msg) <= TELEGRAM_CAPTION_LIMIT
+        assert msg.endswith("</a>\n\n") or "</a>" in msg
+        self._assert_tags_balanced(msg)
+
+    @pytest.mark.parametrize(
+        "body_len",
+        # The 900-1100 band is where the old slice landed inside the trailing
+        # <a>/<i> tags: 85 of those 200 lengths produced unparseable HTML.
+        [0, 1, 500, 5000, 20000] + list(range(900, 1100, 7)),
+    )
+    def test_caption_never_exceeds_limit_and_stays_parseable(self, body_len):
+        post = make_post(
+            content="я" * body_len,
+            published_time=datetime(2025, 6, 10, 12, 30, tzinfo=timezone.utc),
+        )
+        msg = format_post_message(post, limit=TELEGRAM_CAPTION_LIMIT)
+        assert len(msg) <= TELEGRAM_CAPTION_LIMIT
+        self._assert_tags_balanced(msg)
+
+    def test_long_url_does_not_push_caption_over_the_limit(self):
+        # The old fixed 150-char reserve could not cover a link this long.
+        post = make_post(link="https://example.com/" + "p" * 600, content="я" * 20000)
+        msg = format_post_message(post, limit=TELEGRAM_CAPTION_LIMIT)
+        assert len(msg) <= TELEGRAM_CAPTION_LIMIT
+        self._assert_tags_balanced(msg)
+
+    def test_truncation_never_splits_an_html_entity(self):
+        # Body of bare ampersands: escaping before truncating could cut &amp;
+        # into "&am" and hand Telegram a malformed entity.
+        post = make_post(content="& " * 5000)
+        msg = format_post_message(post, limit=TELEGRAM_CAPTION_LIMIT)
+        body = msg.split("</b>")[1].split("<a href")[0]
+        assert "&" not in body.replace("&amp;", ""), f"raw or broken entity in: {body!r}"
+
+    def test_link_survives_when_body_is_dropped_entirely(self):
+        post = make_post(title="Т" * 2000, content="я" * 20000)
+        msg = format_post_message(post, limit=TELEGRAM_CAPTION_LIMIT)
+        self._assert_tags_balanced(msg)
