@@ -74,6 +74,10 @@ async def get_pg_pool(
             min_size=min_size,
             max_size=max_size,
             timeout=timeout,
+            # Ping a pooled connection before handing it out. Without this the
+            # pool serves sockets killed by a network blip and the caller dies
+            # on BEGIN with OperationalError instead of getting a live one.
+            check=AsyncConnectionPool.check_connection,
             open=False,
             kwargs={"row_factory": dict_row},
         )

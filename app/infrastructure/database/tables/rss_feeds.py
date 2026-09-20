@@ -84,7 +84,7 @@ class RSSFeedsTable(BaseTable):
 
         Args:
             channel_id: Internal ``channels.id``
-            enabled_only: Skip feeds that are disabled
+            enabled_only: Skip feeds that are disabled or still in error backoff
 
         Returns:
             Feeds ordered newest first.
@@ -95,7 +95,7 @@ class RSSFeedsTable(BaseTable):
                 FROM rss_feeds f
                 JOIN feed_subscriptions fs ON fs.feed_id = f.id
                 WHERE fs.channel_id = %s
-                {"AND f.enabled = TRUE" if enabled_only else ""}
+                {"AND f.enabled = TRUE AND (f.backoff_until IS NULL OR f.backoff_until <= now())" if enabled_only else ""}
                 ORDER BY f.created_at DESC
             """,
             params=(channel_id,),
@@ -139,11 +139,22 @@ class RSSFeedsTable(BaseTable):
         return feed_model
 
     async def update_error_count(self, *, feed_id: int) -> RSSFeedModel | None:
-        """Increment error count."""
+        """Increment error count and push the feed into exponential backoff.
+
+        ``error_count`` on the right-hand side is the pre-update value, so the
+        first failure waits one fetch interval and each further one doubles it,
+        capped at 6 hours. Without this a permanently dead feed (expired domain,
+        dropped DNS) is refetched every cycle forever.
+        """
         data: SingleQueryResult = await self.connection.update_and_fetchone(
             sql="""
                 UPDATE rss_feeds
-                SET error_count = error_count + 1
+                SET error_count = error_count + 1,
+                    backoff_until = now() + LEAST(
+                        INTERVAL '6 hours',
+                        (fetch_interval_sec * POWER(2, LEAST(error_count, 10)))
+                            * INTERVAL '1 second'
+                    )
                 WHERE id = %s
                 RETURNING *;
             """,
