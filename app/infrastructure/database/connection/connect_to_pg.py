@@ -79,7 +79,19 @@ async def get_pg_pool(
             # on BEGIN with OperationalError instead of getting a live one.
             check=AsyncConnectionPool.check_connection,
             open=False,
-            kwargs={"row_factory": dict_row},
+            kwargs={
+                "row_factory": dict_row,
+                # This pool talks to a remote Postgres over the open internet.
+                # Without keepalives a dead link is only noticed after the OS
+                # default idle timeout (2h on macOS), so queries hang until
+                # "consuming input failed: Operation timed out". Probing after
+                # 30s idle, 3 x 10s apart, spots it in about a minute.
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 3,
+            },
         )
 
         await db_pool.open()
