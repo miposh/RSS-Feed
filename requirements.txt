@@ -1,14 +1,14 @@
 # Bot
-aiogram==3.30.0
+aiogram==3.31.0
 aiogram-dialog==2.6.0
 
 # Config
 dynaconf==3.3.5
-pydantic==2.13.4
+pydantic==2.13.5
 
 # Database
-psycopg[binary]==3.3.4
-psycopg-pool==3.3.1
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.2
 
 # RSS / HTTP
 feedparser==6.0.14
