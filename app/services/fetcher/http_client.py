@@ -10,6 +10,13 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# A host that never completes the TCP handshake will not start answering two
+# seconds later: an expired domain, a dead server, a firewall. Each attempt
+# costs a full connect timeout while holding one of the worker's feed slots,
+# so these get a short budget. Read and protocol errors happen mid-exchange
+# and do often succeed on retry, so they keep the full one.
+UNREACHABLE_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout)
+
 
 @dataclass(frozen=True)
 class FetchResult:
@@ -47,6 +54,7 @@ class HTTPClient:
             read=30.0
         )
         self.max_retries = 3
+        self.max_unreachable_retries = 2
         self.base_backoff = 1.0
 
         self.default_headers = {
@@ -181,17 +189,26 @@ class HTTPClient:
                 # Named: httpx raises ConnectTimeout and friends with an empty
                 # str(), which rendered as a bare "Client error:" with no cause.
                 reason = f"{type(e).__name__}: {e}".rstrip(": ")
-                if attempt == self.max_retries - 1:
-                    logger.error(
-                        f"Client error after {self.max_retries} attempts: {url}",
-                        extra={"url": url, "error": reason},
-                        exc_info=True
+                budget = (
+                    self.max_unreachable_retries
+                    if isinstance(e, UNREACHABLE_ERRORS)
+                    else self.max_retries
+                )
+
+                if attempt >= budget - 1:
+                    # An unreachable feed is an expected outcome, not a defect,
+                    # and the caller puts it into backoff. The exception name
+                    # and the URL carry everything a traceback of httpx
+                    # internals would, so this stays one line instead of sixty.
+                    logger.warning(
+                        f"Giving up on {url} after {attempt + 1} attempt(s): {reason}",
+                        extra={"url": url, "error": reason, "attempts": attempt + 1}
                     )
-                    return FetchResult(None, 0, f"Client error: {reason}")
+                    return FetchResult(None, 0, reason)
 
                 backoff = self.base_backoff * (2 ** attempt) + random.uniform(0, 1)
                 logger.warning(
-                    f"Client error on attempt {attempt + 1}/{self.max_retries}, retrying in {backoff:.2f}s: {url}",
+                    f"Client error on attempt {attempt + 1}/{budget}, retrying in {backoff:.2f}s: {url}",
                     extra={"url": url, "attempt": attempt + 1, "backoff": backoff, "error": reason}
                 )
                 await asyncio.sleep(backoff)

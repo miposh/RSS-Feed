@@ -1,4 +1,7 @@
 """Tests for the shared HTTP client's lifecycle and result type — no network."""
+import logging
+
+import httpx
 import pytest
 
 from app.services.fetcher.http_client import (
@@ -67,3 +70,81 @@ class TestDomainSemaphores:
     def test_different_domains_get_different_semaphores(self):
         client = HTTPClient()
         assert client._get_domain_semaphore("a.com") is not client._get_domain_semaphore("b.com")
+
+
+def _failing_client(exc: Exception):
+    """A client whose every request raises `exc`, counting the attempts."""
+    client = HTTPClient()
+    client._init_session()
+    client.base_backoff = 0  # no real sleeping between retries
+    attempts = []
+
+    async def get(url, headers=None):
+        attempts.append(url)
+        raise exc
+
+    client._session.get = get
+    return client, attempts
+
+
+class TestUnreachableHost:
+    """Regression: every fetch failure burned the full retry budget and then
+    dumped a sixty-line httpx traceback at ERROR. A feed whose host is simply
+    down (expired domain, dead server) is an expected outcome, and each extra
+    attempt costs a full connect timeout while holding a worker feed slot."""
+
+    @pytest.mark.parametrize(
+        "exc", [httpx.ConnectTimeout(""), httpx.ConnectError("nodename nor servname provided")]
+    )
+    async def test_connect_failures_stop_early(self, exc):
+        client, attempts = _failing_client(exc)
+        result = await client.fetch("https://dead.example/feed/")
+
+        assert len(attempts) == client.max_unreachable_retries == 2
+        assert result.ok is False and result.status == 0
+        await client.close()
+
+    async def test_read_timeout_keeps_the_full_budget(self):
+        # Mid-exchange failures do succeed on retry, so they are not shortened.
+        client, attempts = _failing_client(httpx.ReadTimeout("slow"))
+        await client.fetch("https://slow.example/feed/")
+
+        assert len(attempts) == client.max_retries == 3
+        await client.close()
+
+    async def test_reason_names_the_exception(self):
+        # httpx raises ConnectTimeout with an empty str(), which used to render
+        # as a bare "Client error: " with the cause missing entirely.
+        client, _ = _failing_client(httpx.ConnectTimeout(""))
+        result = await client.fetch("https://dead.example/feed/")
+
+        assert result.error == "ConnectTimeout"
+        await client.close()
+
+    async def test_gives_up_without_a_traceback_at_warning(self, caplog):
+        client, _ = _failing_client(httpx.ConnectTimeout(""))
+        with caplog.at_level(logging.DEBUG, logger="app.services.fetcher.http_client"):
+            await client.fetch("https://dead.example/feed/")
+
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        giving_up = [r for r in caplog.records if "Giving up" in r.getMessage()]
+        assert len(giving_up) == 1
+        assert giving_up[0].exc_info is None
+        await client.close()
+
+    async def test_a_transient_blip_still_recovers(self):
+        client, attempts = _failing_client(httpx.ConnectError("blip"))
+        client.base_backoff = 0
+
+        async def get(url, headers=None):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise httpx.ConnectError("blip")
+            return httpx.Response(200, content=b"<rss/>", request=httpx.Request("GET", url))
+
+        client._session.get = get
+        result = await client.fetch("https://flaky.example/feed/")
+
+        assert len(attempts) == 2
+        assert result.ok is True and result.content == b"<rss/>"
+        await client.close()
