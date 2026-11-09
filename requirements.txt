@@ -4,22 +4,23 @@ aiogram-dialog==2.6.0
 
 # Config
 dynaconf==3.3.5
+# aiogram 3.31 requires pydantic<2.14
 pydantic==2.13.5
 
 # Database
-psycopg[binary]==3.3.6
-psycopg-pool==3.3.2
+psycopg[binary]==3.3.8
+psycopg-pool==3.3.3
 
 # RSS / HTTP
 feedparser==6.0.14
 httpx==0.28.1
-Brotli==1.2.0
+Brotli==1.2.1
 
 # Scraping / article extraction
 scraperapi-sdk==1.6.1
 botasaurus==4.0.97
-newspaper4k==0.9.6
-lxml-html-clean==0.4.5
+newspaper4k==0.9.6.1
+lxml-html-clean==0.4.6
 
 # Runtime
 psutil==7.2.2
