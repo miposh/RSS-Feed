@@ -52,13 +52,19 @@ class RSSFeedsTable(BaseTable):
         self._log(RSSFeedsTableAction.ADD, url=url, owner_user_id=owner_user_id)
         return feed_model
 
-    async def delete(self, *, feed_id: int) -> None:
-        """Delete an RSS feed."""
+    async def delete_if_unused(self, *, feed_id: int) -> None:
+        """Delete an RSS feed once no channel subscribes to it any more.
+
+        Feeds are shared by URL, so deleting one still in use would cascade
+        and silently unsubscribe every other channel.
+        """
         await self.connection.execute(
             sql="""
-                DELETE FROM rss_feeds WHERE id = %s;
+                DELETE FROM rss_feeds
+                WHERE id = %s
+                AND NOT EXISTS (SELECT 1 FROM feed_subscriptions WHERE feed_id = %s);
             """,
-            params=(feed_id,),
+            params=(feed_id, feed_id),
         )
         self._log(RSSFeedsTableAction.DELETE, feed_id=feed_id)
 

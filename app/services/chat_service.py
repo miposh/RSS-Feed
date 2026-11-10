@@ -57,8 +57,8 @@ class ChatService:
                 channel_id=channel.id
             )
 
-            # Delete the feed source completely
-            await self.db.rss_feeds.delete(feed_id=feed_id)
+            # Drop the feed source itself only if no other channel uses it
+            await self.db.rss_feeds.delete_if_unused(feed_id=feed_id)
             logger.info(f"Deleted feed id={feed_id} from channel {channel_id}")
 
             return True

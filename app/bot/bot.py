@@ -18,6 +18,7 @@ from app.bot.middlewares.user_tracking import UserTrackingMiddleware
 from app.bot.middlewares.database import DataBaseMiddleware
 from app.bot.dialogs.flows import dialogs
 from app.bot.handlers import routers
+from app.bot.handlers.user_handlers import set_bot_commands
 from app.services.admin_service import backfill_channel_admins
 from app.services.channel_rss_worker import ChannelRSSWorkerService
 from app.services.cleanup_service import CleanupService
@@ -70,6 +71,11 @@ async def on_startup(bot: Bot, db_pool) -> tuple[ChannelRSSWorkerService, Cleanu
     # Start cleanup service
     cleanup_service = CleanupService(db_pool)
     await cleanup_service.start()
+
+    try:
+        await set_bot_commands(bot)
+    except Exception as e:
+        logger.warning(f"Failed to register bot commands: {e}")
 
     # Backfill admins for groups added before admin tracking existed. Runs in the
     # background because it makes one Telegram API call per group.
